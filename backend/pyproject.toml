@@ -1,0 +1,18 @@
+[project]
+name = "birdroms-backend"
+version = "0.1.0"
+description = "Django backend for birdROMs"
+readme = "../README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "Django>=5.0",
+    "djangorestframework>=3.15",
+    "djangorestframework-simplejwt>=5.3",
+    "psycopg2-binary>=2.9",
+    "python-dotenv>=1.0",
+    "requests>=2.31",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

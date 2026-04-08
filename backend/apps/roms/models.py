@@ -1,0 +1,29 @@
+from django.conf import settings
+from django.db import models
+
+from .services import classify_platform_from_extension
+
+
+class ROM(models.Model):
+    title = models.CharField(max_length=255)
+    platform = models.CharField(max_length=120, blank=True)
+    file = models.FileField(upload_to="roms/")
+    extension = models.CharField(max_length=20, blank=True)
+    cover_art_url = models.URLField(blank=True)
+    cover_art_source = models.CharField(max_length=120, blank=True)
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="roms")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-uploaded_at"]
+
+    def save(self, *args, **kwargs):
+        if self.file and self.file.name:
+            filename = self.file.name.lower()
+            self.extension = f".{filename.split('.')[-1]}" if "." in filename else ""
+            if not self.platform:
+                self.platform = classify_platform_from_extension(filename)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.title} ({self.platform})"
