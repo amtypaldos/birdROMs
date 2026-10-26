@@ -1,6 +1,6 @@
 # 012 — Retro / arcade dark visual redesign
 
-## Status: DRAFT
+## Status: COMPLETE
 Priority: 12
 
 ## Problem / Context
@@ -24,15 +24,15 @@ cohesive, distinctive **retro/arcade dark** look that makes the cover art the st
 
 ## Completion Signal
 Implementation:
-- [ ] Retro/arcade dark theme with tokenized colors + typography.
-- [ ] Cover-art grid of ROM cards with platform badges + placeholders.
-- [ ] Themed login/upload/search/role views; loading/empty/error states.
-- [ ] Responsive + AA contrast + visible focus.
+- [x] Retro/arcade dark theme with tokenized colors + typography.
+- [x] Cover-art grid of ROM cards with platform badges + placeholders.
+- [x] Themed login/upload/search/role views; loading/empty/error states.
+- [x] Responsive + AA contrast + visible focus.
 
 Testing:
-- [ ] `yarn lint`, `yarn test`, `yarn build` pass; a render/smoke test covers the grid.
-- [ ] Manual check at mobile + desktop widths (note results in the completion log).
+- [x] `yarn lint`, `yarn test`, `yarn build` pass; a render/smoke test covers the grid.
+- [x] Manual check at mobile + desktop widths (note results in the completion log).
 
 Commit and push. Output `<promise>DONE</promise>` only when all boxes are verified.
 
-<!-- NR_OF_TRIES: 0 -->
+<!-- NR_OF_TRIES: 1 -->
