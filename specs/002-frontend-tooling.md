@@ -1,6 +1,6 @@
 # 002 — Frontend tooling: lint + test runner
 
-## Status: DRAFT
+## Status: COMPLETE
 Priority: 2
 
 ## Problem / Context
@@ -21,15 +21,15 @@ later frontend specs can be verified. This spec adds that tooling without changi
 
 ## Completion Signal
 Implementation:
-- [ ] ESLint config + `lint` script added; `yarn lint` clean.
-- [ ] Vitest + Testing Library + jsdom added; `test` script added.
-- [ ] client.js and App.jsx tests written.
+- [x] ESLint config + `lint` script added; `yarn lint` clean.
+- [x] Vitest + Testing Library + jsdom added; `test` script added.
+- [x] client.js and App.jsx tests written.
 
 Testing:
-- [ ] `yarn lint` exits 0.
-- [ ] `yarn test` (run mode) exits 0 with the new tests passing.
-- [ ] `yarn build` still succeeds.
+- [x] `yarn lint` exits 0.
+- [x] `yarn test` (run mode) exits 0 with the new tests passing.
+- [x] `yarn build` still succeeds.
 
 Commit and push. Output `<promise>DONE</promise>` only when all boxes are verified.
 
-<!-- NR_OF_TRIES: 0 -->
+<!-- NR_OF_TRIES: 1 -->
