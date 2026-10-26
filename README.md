@@ -107,6 +107,20 @@ yarn lint
 yarn test
 ```
 
+### Continuous integration
+
+GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every push
+and pull request:
+
+- **Backend** — `uv sync --locked` then `uv run python manage.py test` (Python 3.12, SQLite
+  test DB, no Postgres service).
+- **Frontend** — `yarn install --immutable`, `yarn lint`, `yarn test`, `yarn build` (Node 22,
+  Yarn via corepack).
+- **Docker** — builds the production `backend` and `frontend` images (`--target prod`) to
+  catch Dockerfile breakage.
+
+Run the same commands locally before opening a PR.
+
 ## Auth and Roles
 
 Roles are implemented as user groups:
