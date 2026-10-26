@@ -1,5 +1,4 @@
 import os
-from dataclasses import dataclass
 
 
 DISC_IMAGE = "Disc Image"
@@ -71,17 +70,3 @@ def get_extension(filename: str) -> str:
 def classify_platform_from_extension(filename: str) -> str:
     return EXTENSION_TO_PLATFORM.get(get_extension(filename), UNKNOWN_PLATFORM)
 
-
-@dataclass
-class CoverArtResult:
-    image_url: str | None
-    source: str | None
-
-
-def scrape_cover_art(title: str, platform: str) -> CoverArtResult:
-    """
-    Placeholder hook for cover scraping integrations.
-    Replace this with calls to provider APIs (IGDB, ScreenScraper, etc).
-    """
-    _ = (title, platform)
-    return CoverArtResult(image_url=None, source=None)

@@ -110,6 +110,23 @@ describe("api client", () => {
     click.mockRestore();
   });
 
+  it("loads cover art through the authenticated endpoint as an object URL", async () => {
+    const blob = new Blob(["PNG"], { type: "image/png" });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, blob: () => Promise.resolve(blob) });
+    vi.stubGlobal("fetch", fetchMock);
+    const createObjectURL = vi.fn(() => "blob:cover");
+    vi.stubGlobal("URL", { ...URL, createObjectURL });
+    setToken("abc123");
+
+    const url = await api.coverObjectUrl({ id: 7, cover_art_url: "http://host/api/roms/7/cover/" });
+
+    const [path, options] = fetchMock.mock.calls[0];
+    expect(path).toBe("/api/roms/7/cover/");
+    expect(options.headers.Authorization).toBe("Token abc123");
+    expect(createObjectURL).toHaveBeenCalledWith(blob);
+    expect(url).toBe("blob:cover");
+  });
+
   it("parses Content-Disposition filenames", () => {
     expect(filenameFromDisposition('attachment; filename="Zelda.nes"')).toBe("Zelda.nes");
     expect(filenameFromDisposition("attachment; filename*=UTF-8''Pok%C3%A9mon.gb")).toBe("Pokémon.gb");

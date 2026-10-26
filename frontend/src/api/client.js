@@ -115,6 +115,12 @@ export const api = {
   scrapeCover(romId) {
     return request(`/roms/${romId}/scrape_cover/`, { method: "POST" });
   },
+  // Cover art is private too (an <img> cannot send the token): fetch it as a blob and return
+  // an object URL the caller must revoke.
+  async coverObjectUrl(rom) {
+    const response = await rawRequest(`/roms/${rom.id}/cover/`);
+    return URL.createObjectURL(await response.blob());
+  },
   // ROMs are private: fetch through the authenticated endpoint, then save the blob locally.
   async downloadRom(rom) {
     const response = await rawRequest(`/roms/${rom.id}/download/`);

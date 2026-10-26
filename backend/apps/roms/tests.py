@@ -1,11 +1,17 @@
+from io import StringIO
 from pathlib import Path
+from unittest import mock
+
+import requests
 
 from django.conf import settings
 from django.contrib.auth.models import Group, User
+from django.core.files.base import ContentFile
 from django.core.files.storage import FileSystemStorage, StorageHandler, default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.exceptions import ImproperlyConfigured
-from django.test import SimpleTestCase, override_settings
+from django.core.management import call_command
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -14,6 +20,7 @@ from storages.backends.s3 import S3Storage
 from birdroms.storage import FILESYSTEM_STORAGE, S3_STORAGE, build_storages
 from birdroms.uploads import parse_max_upload_bytes
 
+from .cover_art import find_libretro, find_screenscraper, parse_cover_art_settings
 from .models import ROM
 from .services import (
     EXTENSION_TO_PLATFORM,
@@ -95,17 +102,284 @@ class ROMPermissionTests(APITestCase):
         self.assertTrue(Path(rom.file.path).resolve().is_relative_to(Path(settings.MEDIA_ROOT).resolve()))
 
 
-class ScrapeCoverTests(APITestCase):
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+LIBRETRO_ONLY = parse_cover_art_settings({"COVER_ART_PROVIDERS": "libretro", "COVER_ART_TIMEOUT": "3"})
+BOTH_PROVIDERS = parse_cover_art_settings(
+    {
+        "COVER_ART_PROVIDERS": "screenscraper,libretro",
+        "SS_DEV_ID": "dev",
+        "SS_DEV_PASSWORD": "devpass",
+        "SS_USER": "me",
+        "SS_PASSWORD": "secret",
+    }
+)
+
+
+class FakeResponse:
+    def __init__(self, status_code=200, content=b"", content_type="image/png", json_data=None):
+        self.status_code = status_code
+        self.content = content
+        self.headers = {"Content-Type": content_type}
+        self._json = json_data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}")
+
+    def iter_content(self, chunk_size):
+        for start in range(0, len(self.content), chunk_size):
+            yield self.content[start : start + chunk_size]
+
+    def json(self):
+        return self._json
+
+
+def fake_http(routes):
+    """Mock for `requests.get`: the first route whose key is a substring of the URL answers;
+    anything else is a 404. Calls are recorded on the mock."""
+
+    def handler(url, **kwargs):
+        for fragment, response in routes.items():
+            if fragment in url:
+                if isinstance(response, Exception):
+                    raise response
+                return response
+        return FakeResponse(status_code=404, content_type="text/html")
+
+    return mock.Mock(side_effect=handler)
+
+
+class CoverArtSettingsTests(SimpleTestCase):
+    def test_defaults(self):
+        config = parse_cover_art_settings({})
+        self.assertEqual(config.providers, ("libretro", "screenscraper"))
+        self.assertEqual(config.timeout, 10.0)
+
+    def test_order_and_timeout_are_configurable(self):
+        config = parse_cover_art_settings({"COVER_ART_PROVIDERS": " ScreenScraper , libretro", "COVER_ART_TIMEOUT": "2.5"})
+        self.assertEqual(config.providers, ("screenscraper", "libretro"))
+        self.assertEqual(config.timeout, 2.5)
+
+    def test_empty_disables_scraping(self):
+        self.assertEqual(parse_cover_art_settings({"COVER_ART_PROVIDERS": ""}).providers, ())
+
+    def test_rejects_unknown_provider_and_bad_timeout(self):
+        with self.assertRaises(ImproperlyConfigured):
+            parse_cover_art_settings({"COVER_ART_PROVIDERS": "igdb"})
+        for bad in ("soon", "0", "-1"):
+            with self.assertRaises(ImproperlyConfigured):
+                parse_cover_art_settings({"COVER_ART_TIMEOUT": bad})
+
+
+class ProviderTests(SimpleTestCase):
+    def test_libretro_urls_map_platform_and_sanitize_title(self):
+        urls = find_libretro("Mario & Luigi: Superstar Saga", "Game Boy Advance", "roms/mlss.gba", LIBRETRO_ONLY)
+        self.assertEqual(
+            urls[0],
+            "https://thumbnails.libretro.com/Nintendo%20-%20Game%20Boy%20Advance/Named_Boxarts/"
+            "Mario%20_%20Luigi_%20Superstar%20Saga.png",
+        )
+        # Boxart for every name candidate first, then title screens, then snaps.
+        self.assertIn("/Named_Boxarts/mlss.png", urls[1])
+        self.assertIn("/Named_Titles/", urls[2])
+        self.assertIn("/Named_Snaps/", urls[-1])
+
+    def test_libretro_skips_unmapped_platforms(self):
+        self.assertEqual(find_libretro("Game", "Disc Image", "game.iso", LIBRETRO_ONLY), [])
+
+    def test_screenscraper_skipped_without_credentials(self):
+        with mock.patch("apps.roms.cover_art.requests.get") as get:
+            self.assertEqual(find_screenscraper("Metroid", "NES", "metroid.nes", LIBRETRO_ONLY), [])
+        get.assert_not_called()
+
+    def test_screenscraper_queries_with_credentials_and_ranks_media(self):
+        payload = {
+            "response": {
+                "jeu": {
+                    "medias": [
+                        {"type": "ss", "region": "us", "url": "https://ss.example/ss"},
+                        {"type": "box-2D", "region": "jp", "url": "https://ss.example/box-jp"},
+                        {"type": "box-2D", "region": "us", "url": "https://ss.example/box-us"},
+                        {"type": "wheel", "region": "us", "url": "https://ss.example/wheel"},
+                    ]
+                }
+            }
+        }
+        get = fake_http({"screenscraper.fr": FakeResponse(json_data=payload, content_type="application/json")})
+        with mock.patch("apps.roms.cover_art.requests.get", get):
+            urls = find_screenscraper("Metroid", "NES", "roms/Metroid (USA).nes", BOTH_PROVIDERS)
+
+        self.assertEqual(urls, ["https://ss.example/box-us", "https://ss.example/box-jp", "https://ss.example/ss"])
+        params = get.call_args.kwargs["params"]
+        self.assertEqual(params["romnom"], "Metroid (USA).nes")
+        self.assertEqual(params["systemeid"], 3)
+        self.assertEqual((params["devid"], params["ssid"]), ("dev", "me"))
+        self.assertEqual(get.call_args.kwargs["timeout"], 10.0)
+
+
+@override_settings(COVER_ART=LIBRETRO_ONLY)
+class CoverArtScrapeTests(APITestCase):
+    list_url = reverse("rom-list")
+    boxart = "Nintendo%20-%20Nintendo%20Entertainment%20System/Named_Boxarts/Metroid.png"
+
+    def setUp(self):
+        self.admin_user = make_user("admin", "super_admin")
+        self.client.force_authenticate(self.admin_user)
+
+    def upload(self, title="Metroid", name="metroid.nes"):
+        return self.client.post(self.list_url, {"title": title, "file": dummy_rom(name)}, format="multipart")
+
+    def test_upload_match_stores_cover_in_storage(self):
+        get = fake_http({self.boxart: FakeResponse(content=PNG_BYTES)})
+        with mock.patch("apps.roms.cover_art.requests.get", get):
+            response = self.upload()
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        rom = ROM.objects.get()
+        self.assertEqual(rom.cover_art_source, "libretro")
+        self.assertTrue(rom.cover_art.name.startswith("covers/") and rom.cover_art.name.endswith(".png"))
+        self.assertTrue(default_storage.exists(rom.cover_art.name))
+        self.assertEqual(response.data["cover_art_url"], f"http://testserver{reverse('rom-cover', args=[rom.pk])}")
+        self.assertEqual(response.data["cover_art_source"], "libretro")
+        self.assertEqual(get.call_args.kwargs["timeout"], 3.0)
+
+        cover = self.client.get(reverse("rom-cover", args=[rom.pk]))
+        self.assertEqual(cover.status_code, status.HTTP_200_OK)
+        self.assertEqual(cover["Content-Type"], "image/png")
+        self.assertEqual(b"".join(cover.streaming_content), PNG_BYTES)
+
+    def test_upload_falls_back_to_title_screen(self):
+        titles = self.boxart.replace("Named_Boxarts", "Named_Titles")
+        get = fake_http({titles: FakeResponse(content=PNG_BYTES)})
+        with mock.patch("apps.roms.cover_art.requests.get", get):
+            self.upload()
+        self.assertTrue(ROM.objects.get().cover_art)
+
+    def test_upload_without_match_leaves_cover_empty(self):
+        with mock.patch("apps.roms.cover_art.requests.get", fake_http({})):
+            response = self.upload()
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        rom = ROM.objects.get()
+        self.assertFalse(rom.cover_art)
+        self.assertEqual(rom.cover_art_source, "")
+        self.assertIsNone(response.data["cover_art_url"])
+        self.assertEqual(self.client.get(reverse("rom-cover", args=[rom.pk])).status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_non_image_responses_are_ignored(self):
+        get = fake_http({self.boxart: FakeResponse(content=b"<html>", content_type="text/html")})
+        with mock.patch("apps.roms.cover_art.requests.get", get):
+            self.upload()
+        self.assertFalse(ROM.objects.get().cover_art)
+
+    def test_provider_error_does_not_break_upload(self):
+        get = fake_http({"thumbnails.libretro.com": requests.ConnectionError("provider down")})
+        with mock.patch("apps.roms.cover_art.requests.get", get), self.assertLogs("apps.roms.cover_art", "WARNING"):
+            response = self.upload()
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertFalse(ROM.objects.get().cover_art)
+
+    def test_unexpected_error_does_not_break_upload(self):
+        with mock.patch("apps.roms.cover_art.scrape_cover_art", side_effect=RuntimeError("boom")), self.assertLogs(
+            "apps.roms.cover_art", "ERROR"
+        ):
+            response = self.upload()
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(ROM.objects.count(), 1)
+
+    @override_settings(COVER_ART=BOTH_PROVIDERS)
+    def test_failing_provider_falls_through_to_next(self):
+        get = fake_http(
+            {
+                "screenscraper.fr": FakeResponse(status_code=500, content_type="text/plain"),
+                self.boxart: FakeResponse(content=PNG_BYTES),
+            }
+        )
+        with mock.patch("apps.roms.cover_art.requests.get", get), self.assertLogs("apps.roms.cover_art", "WARNING"):
+            self.upload()
+        self.assertEqual(ROM.objects.get().cover_art_source, "libretro")
+
+    @override_settings(COVER_ART=BOTH_PROVIDERS)
+    def test_screenscraper_match_is_used_first(self):
+        payload = {"response": {"jeu": {"medias": [{"type": "box-2D", "region": "us", "url": "https://ss.example/box"}]}}}
+        get = fake_http(
+            {
+                "screenscraper.fr": FakeResponse(json_data=payload, content_type="application/json"),
+                "ss.example/box": FakeResponse(content=b"\xff\xd8jpeg", content_type="image/jpeg"),
+            }
+        )
+        with mock.patch("apps.roms.cover_art.requests.get", get):
+            self.upload()
+        rom = ROM.objects.get()
+        self.assertEqual(rom.cover_art_source, "screenscraper")
+        self.assertTrue(rom.cover_art.name.endswith(".jpg"))
+
+    def test_manual_scrape_replaces_existing_art(self):
+        with mock.patch("apps.roms.cover_art.requests.get", fake_http({self.boxart: FakeResponse(content=PNG_BYTES)})):
+            self.upload()
+        rom = ROM.objects.get()
+        first = rom.cover_art.name
+        new_bytes = PNG_BYTES + b"v2"
+        with mock.patch("apps.roms.cover_art.requests.get", fake_http({self.boxart: FakeResponse(content=new_bytes)})):
+            response = self.client.post(reverse("rom-scrape-cover", args=[rom.pk]))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        rom.refresh_from_db()
+        with rom.cover_art.open("rb") as handle:
+            self.assertEqual(handle.read(), new_bytes)
+        if first != rom.cover_art.name:
+            self.assertFalse(default_storage.exists(first))
+
     def test_scrape_cover_returns_404_when_no_image_found(self):
-        admin_user = make_user("admin", "super_admin")
-        rom = ROM.objects.create(title="Metroid", file=dummy_rom("metroid.nes"), uploaded_by=admin_user)
-        self.client.force_authenticate(admin_user)
-
-        response = self.client.post(reverse("rom-scrape-cover", args=[rom.pk]))
-
+        rom = ROM.objects.create(title="Metroid", file=dummy_rom("metroid.nes"), uploaded_by=self.admin_user)
+        with mock.patch("apps.roms.cover_art.requests.get", fake_http({})):
+            response = self.client.post(reverse("rom-scrape-cover", args=[rom.pk]))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         rom.refresh_from_db()
-        self.assertEqual(rom.cover_art_url, "")
+        self.assertFalse(rom.cover_art)
+
+    def test_cover_requires_role(self):
+        with mock.patch("apps.roms.cover_art.requests.get", fake_http({self.boxart: FakeResponse(content=PNG_BYTES)})):
+            self.upload()
+        url = reverse("rom-cover", args=[ROM.objects.get().pk])
+
+        self.client.force_authenticate(make_user("nobody"))
+        self.assertEqual(self.client.get(url).status_code, status.HTTP_403_FORBIDDEN)
+        self.client.force_authenticate(make_user("reader", "readonly"))
+        self.assertEqual(self.client.get(url).status_code, status.HTTP_200_OK)
+        self.client.force_authenticate(None)
+        self.assertIn(self.client.get(url).status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+
+@override_settings(COVER_ART=LIBRETRO_ONLY)
+class BackfillCoverArtCommandTests(TestCase):
+    def test_backfills_only_missing_art(self):
+        admin_user = make_user("admin", "super_admin")
+        metroid = ROM.objects.create(title="Metroid", file=dummy_rom("metroid.nes"), uploaded_by=admin_user)
+        unknown = ROM.objects.create(title="Obscure Homebrew", file=dummy_rom("homebrew.nes"), uploaded_by=admin_user)
+        existing = ROM.objects.create(title="Metroid", file=dummy_rom("metroid2.nes"), uploaded_by=admin_user)
+        existing.cover_art.save("existing.png", ContentFile(b"old"), save=True)
+        get = fake_http({CoverArtScrapeTests.boxart: FakeResponse(content=PNG_BYTES)})
+        out = StringIO()
+
+        with mock.patch("apps.roms.cover_art.requests.get", get):
+            call_command("backfill_cover_art", stdout=out)
+
+        metroid.refresh_from_db()
+        unknown.refresh_from_db()
+        existing.refresh_from_db()
+        self.assertEqual(metroid.cover_art_source, "libretro")
+        self.assertFalse(unknown.cover_art)
+        with existing.cover_art.open("rb") as handle:
+            self.assertEqual(handle.read(), b"old")
+        self.assertIn("Cover art saved for 1 ROM(s); 1 without a match.", out.getvalue())
 
 
 class PlatformClassificationTests(SimpleTestCase):
