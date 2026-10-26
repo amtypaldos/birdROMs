@@ -273,3 +273,61 @@ class FilesystemStorageRoundTripTests(APITestCase):
         rom = ROM.objects.get(pk=rom.pk)
         with rom.file.open("rb") as fh:
             self.assertEqual(fh.read(), payload)
+
+
+class ROMDownloadTests(APITestCase):
+    PAYLOAD = b"\x4e\x45\x53\x1a" + bytes(range(32))
+
+    def setUp(self):
+        self.admin_user = make_user("admin", "super_admin")
+        self.rom = ROM.objects.create(
+            title="Zelda", file=SimpleUploadedFile("zelda.nes", self.PAYLOAD), uploaded_by=self.admin_user
+        )
+        self.url = reverse("rom-download", args=[self.rom.pk])
+
+    def assert_downloads_rom(self, response):
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(b"".join(response.streaming_content), self.PAYLOAD)
+        disposition = response["Content-Disposition"]
+        self.assertTrue(disposition.startswith("attachment;"), disposition)
+        self.assertIn('filename="Zelda.nes"', disposition)
+
+    def test_super_admin_can_download(self):
+        self.client.force_authenticate(self.admin_user)
+        self.assert_downloads_rom(self.client.get(self.url))
+
+    def test_readonly_can_download(self):
+        self.client.force_authenticate(make_user("reader", "readonly"))
+        self.assert_downloads_rom(self.client.get(self.url))
+
+    def test_anonymous_cannot_download(self):
+        response = self.client.get(self.url)
+        self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+    def test_user_without_role_cannot_download(self):
+        self.client.force_authenticate(make_user("nobody"))
+        self.assertEqual(self.client.get(self.url).status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_download_filename_strips_path_separators(self):
+        self.rom.title = "../etc/passwd"
+        self.rom.save()
+        self.client.force_authenticate(self.admin_user)
+        response = self.client.get(self.url)
+        self.assertIn('filename=".._etc_passwd.nes"', response["Content-Disposition"])
+
+    def test_unknown_id_returns_404(self):
+        self.client.force_authenticate(self.admin_user)
+        response = self.client.get(reverse("rom-download", args=[self.rom.pk + 999]))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_serializer_exposes_download_endpoint_not_media_url(self):
+        self.client.force_authenticate(make_user("reader", "readonly"))
+        data = self.client.get(reverse("rom-list")).data[0]
+        self.assertNotIn("file", data)
+        self.assertNotIn(settings.MEDIA_URL, str(data))
+        self.assertTrue(data["download_url"].endswith(self.url), data["download_url"])
+
+    def test_media_route_does_not_serve_roms(self):
+        self.client.force_authenticate(self.admin_user)
+        response = self.client.get(settings.MEDIA_URL + self.rom.file.name)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

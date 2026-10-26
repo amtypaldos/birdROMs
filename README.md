@@ -147,6 +147,17 @@ ROM files and cover art go to Django's default storage. You choose the backend w
 
 Every variable is documented in `backend/.env.example`.
 
+## Downloads
+
+ROMs are private. Django never serves `MEDIA_ROOT` directly, and the API does not return a
+storage URL for the file. Downloads go through `GET /api/roms/{id}/download/`, which needs an
+authenticated `readonly` or `super_admin` user and returns the file as an attachment
+(`Content-Disposition: attachment; filename="<title><ext>"`). Unknown ids return 404. This works
+the same way with both storage backends. birdROMs streams the file from storage through the app
+and never redirects to a pre-signed S3 URL, so clients never get a direct storage URL. Each ROM
+in the API lists this endpoint as `download_url`. The web UI fetches it with the user's token
+and saves the response as a blob.
+
 ## Cover Art Scraping
 
 `POST /api/roms/{id}/scrape-cover/` attempts to fetch cover art metadata based on ROM title/platform. The initial implementation provides a service hook and safe fallback, ready for integration with providers such as IGDB, ScreenScraper, or custom scrapers.
