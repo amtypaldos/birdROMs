@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, filenameFromDisposition, getToken, setToken } from "./client";
+import { api, consumeOidcFragment, filenameFromDisposition, getToken, setToken } from "./client";
 
 function mockLocalStorage() {
   const store = new Map();
@@ -94,5 +94,29 @@ describe("api client", () => {
     expect(filenameFromDisposition('attachment; filename="Zelda.nes"')).toBe("Zelda.nes");
     expect(filenameFromDisposition("attachment; filename*=UTF-8''Pok%C3%A9mon.gb")).toBe("Pokémon.gb");
     expect(filenameFromDisposition(null)).toBeNull();
+  });
+});
+
+describe("consumeOidcFragment", () => {
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("returns null when there is no SSO result in the URL", () => {
+    window.history.replaceState(null, "", "/?page=2#section");
+    expect(consumeOidcFragment()).toBeNull();
+    expect(window.location.hash).toBe("#section");
+  });
+
+  it("reads the token and strips it from the address bar", () => {
+    window.history.replaceState(null, "", "/library?x=1#oidc_token=tok123");
+    expect(consumeOidcFragment()).toEqual({ token: "tok123", error: null });
+    expect(window.location.hash).toBe("");
+    expect(window.location.pathname + window.location.search).toBe("/library?x=1");
+  });
+
+  it("reads an error", () => {
+    window.history.replaceState(null, "", "/#oidc_error=Single+sign-on+failed.");
+    expect(consumeOidcFragment()).toEqual({ token: null, error: "Single sign-on failed." });
   });
 });

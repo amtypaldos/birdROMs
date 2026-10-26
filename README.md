@@ -6,7 +6,7 @@
 
 birdROMs is free and open-source software. There is no central service: anyone can run
 their own private instance for themselves and a trusted group. Every deployment-specific
-value (database, secret key, allowed hosts, and future auth/storage settings) is configured
+value (database, secret key, allowed hosts, auth and storage settings) is configured
 through environment variables documented in `backend/.env.example` — no secrets live in
 this repository. Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -25,7 +25,7 @@ this repository. Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.m
 
 - Backend: Django, Django REST Framework, PostgreSQL
 - Frontend: React + Vite
-- Auth: Django auth + token-based API auth
+- Auth: Django auth + token-based API auth; local login and/or OIDC SSO (Authlib)
 - Storage: local/NFS filesystem by default (`MEDIA_ROOT`), or any S3-compatible object store (`STORAGE_BACKEND=s3`)
 
 ## Project Structure
@@ -85,7 +85,72 @@ Roles are implemented as user groups:
 - `super_admin`: create/edit/delete ROMs, upload files, scrape cover art
 - `readonly`: list ROMs and download files
 
-Use Django admin to assign users to these groups after signup/creation.
+Use Django admin to assign roles to local users. SSO users get their role from the provider
+(see below).
+
+### Login methods
+
+`AUTH_METHODS` (comma-separated, order does not matter) picks the login methods. The web UI
+asks the public `GET /api/auth/config/` endpoint which methods are on and shows only those.
+
+| Setup | Env |
+| --- | --- |
+| Local only (default) | `AUTH_METHODS=local` |
+| SSO only | `AUTH_METHODS=oidc`, `ALLOW_LOCAL_LOGIN=False` |
+| Both | `AUTH_METHODS=local,oidc` |
+
+- **local**: `POST /api/auth/login/` and `POST /api/auth/register/` (self-registered users are
+  `readonly`). `ALLOW_LOCAL_LOGIN` force-enables them and defaults to `DJANGO_DEBUG`, so local
+  dev always works. When local login is off, both endpoints return 404.
+- **oidc**: standard Authorization Code flow with PKCE against a single OpenID Connect
+  provider. It uses [Authlib](https://docs.authlib.org/), a maintained library that handles
+  discovery, state/nonce, and ID token signature checks. The browser goes to
+  `/api/auth/oidc/login/`, signs in at the provider, and comes back to
+  `/api/auth/oidc/callback/`. The callback then redirects to the UI (`OIDC_LOGIN_REDIRECT_URL`)
+  with the API token in the URL fragment, and the UI removes it from the address bar right away.
+
+Both methods issue the same DRF API token, so the rest of the API works the same either way.
+`GET /api/auth/me/` returns the signed-in user's `id`, `username`, `email` and `role`.
+
+On first SSO login, birdROMs creates a user linked to the provider's stable `sub` and gives
+them a role from the `OIDC_GROUPS_CLAIM` claim. Members of `OIDC_ADMIN_GROUP` get
+`super_admin` and everyone else gets `readonly`. The role is re-synced on every SSO login.
+Returning users are matched on `sub`, never on username. Matching existing local accounts by
+email is opt-in (`OIDC_LINK_BY_EMAIL=True`) and only applies to emails the provider marks as
+verified.
+
+**Pocket ID (reference):** create an OIDC client with callback URL
+`https://roms.example.com/api/auth/oidc/callback/`, then:
+
+```env
+AUTH_METHODS=oidc
+ALLOW_LOCAL_LOGIN=False
+OIDC_ISSUER=https://id.example.com
+OIDC_CLIENT_ID=<client id>
+OIDC_CLIENT_SECRET=<client secret>
+OIDC_REDIRECT_URI=https://roms.example.com/api/auth/oidc/callback/
+OIDC_LOGIN_REDIRECT_URL=https://roms.example.com/
+OIDC_ADMIN_GROUP=birdroms-admins
+OIDC_PROVIDER_NAME=Pocket ID
+```
+
+**Authentik:** create an OAuth2/OpenID provider and application (slug `birdroms`). Authentik
+sends `groups` in the default `profile` scope:
+
+```env
+OIDC_ISSUER=https://authentik.example.com/application/o/birdroms
+OIDC_SCOPES=openid email profile
+OIDC_ADMIN_GROUP=birdroms-admins
+OIDC_PROVIDER_NAME=Authentik
+```
+
+**Keycloak:** use `OIDC_ISSUER=https://keycloak.example.com/realms/<realm>` and add a "Group
+Membership" mapper (claim name `groups`, full group path off) to the client.
+**Google:** use `OIDC_ISSUER=https://accounts.google.com` and `OIDC_SCOPES=openid email profile`.
+Google has no groups claim, so every Google user is `readonly`. Promote users in Django admin
+instead. That role then gets reset on their next SSO login unless they are a Django superuser.
+
+Every variable is documented in `backend/.env.example`. SAML is not supported.
 
 ## ROM Classification
 

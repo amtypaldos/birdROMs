@@ -64,7 +64,25 @@ function saveBlob(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
+// After SSO the backend redirects back with `#oidc_token=...` or `#oidc_error=...`. Read it once
+// and strip it from the address bar so the token is not left in history or shared links.
+export function consumeOidcFragment() {
+  const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const token = params.get("oidc_token");
+  const error = params.get("oidc_error");
+  if (!token && !error) return null;
+  window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  return { token, error };
+}
+
 export const api = {
+  oidcLoginUrl: `${API_BASE}/auth/oidc/login/`,
+  authConfig() {
+    return request("/auth/config/");
+  },
+  me() {
+    return request("/auth/me/");
+  },
   register(payload) {
     return request("/auth/register/", {
       method: "POST",

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .auth_config import parse_allow_local_login, parse_auth_methods, parse_oidc_settings
 from .storage import build_storages
 from .uploads import parse_max_upload_bytes
 
@@ -93,6 +94,13 @@ STORAGES = build_storages(os.environ)
 # Largest accepted ROM upload, in bytes (default 2 GiB); see birdroms/uploads.py.
 MAX_ROM_UPLOAD_BYTES = parse_max_upload_bytes(os.environ)
 
+# Enabled login methods (`local`, `oidc`); see birdroms/auth_config.py and .env.example.
+AUTH_METHODS = parse_auth_methods(os.environ)
+# Local username/password login is always on when this is true (defaults to DEBUG).
+ALLOW_LOCAL_LOGIN = parse_allow_local_login(os.environ, DEBUG)
+# Single OIDC/SSO provider (Pocket ID, Authentik, Keycloak, Authelia, Google, ...).
+OIDC = parse_oidc_settings(os.environ, AUTH_METHODS)
+
 # `manage.py test` runs against in-memory SQLite and a throwaway media dir so the
 # suite needs no running PostgreSQL and never writes into the real MEDIA_ROOT.
 TESTING = len(sys.argv) > 1 and sys.argv[1] == "test"
@@ -102,6 +110,9 @@ if TESTING:
     STORAGES = build_storages({})
     atexit.register(shutil.rmtree, MEDIA_ROOT, ignore_errors=True)
     PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
+    AUTH_METHODS = parse_auth_methods({})
+    ALLOW_LOCAL_LOGIN = False
+    OIDC = parse_oidc_settings({}, AUTH_METHODS)
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
