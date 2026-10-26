@@ -26,7 +26,7 @@ this repository. Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.m
 - Backend: Django, Django REST Framework, PostgreSQL
 - Frontend: React + Vite
 - Auth: Django auth + token-based API auth
-- Storage: local media storage by default (`MEDIA_ROOT`)
+- Storage: local/NFS filesystem by default (`MEDIA_ROOT`), or any S3-compatible object store (`STORAGE_BACKEND=s3`)
 
 ## Project Structure
 
@@ -132,6 +132,20 @@ The canonical map is `EXTENSION_TO_PLATFORM` in `backend/apps/roms/services.py`
 Disc images are shared by many systems (Saturn, Sega CD, PlayStation, PS2, PSP, …), so they get
 the generic "Disc Image" label — set `platform` explicitly (e.g. `Sega Saturn`, `Sony
 PlayStation 2`) when uploading them.
+
+## File Storage
+
+ROM files and cover art go to Django's default storage. You choose the backend with
+`STORAGE_BACKEND`, so switching needs no code changes:
+
+- `filesystem` (default): files live under `MEDIA_ROOT`, which defaults to `backend/media`. For
+  NFS, mount the share and set `MEDIA_ROOT` to the mount path.
+- `s3`: any S3-compatible store (AWS S3, MinIO, Cloudflare R2, Backblaze B2), configured with
+  `S3_BUCKET_NAME`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_ENDPOINT_URL`, `S3_REGION`,
+  `S3_CUSTOM_DOMAIN`, `S3_PATH_STYLE` (MinIO usually needs `True`), `S3_LOCATION` and
+  `S3_QUERYSTRING_AUTH`. Objects are never made public, and file URLs are signed by default.
+
+Every variable is documented in `backend/.env.example`.
 
 ## Cover Art Scraping
 

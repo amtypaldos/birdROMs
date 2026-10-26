@@ -2,3 +2,4 @@
 - 2026-10-26 — 002 frontend-tooling: ESLint 9 flat config (react + hooks), Vitest 2 + RTL + jsdom, client.js and App.jsx tests (4), README frontend testing section.
 - 2026-10-26 — 003 foss-licensing-and-hygiene: MIT LICENSE, README self-hosting + License sections, CONTRIBUTING.md, .gitignore gaps filled, documented .env.example (backend/.env already untracked).
 - 2026-10-26 — 004 expanded-platform-support: 50-extension canonical map (Nintendo/Sega/Sony/Atari/others + generic Disc Image/Archive), suffix-based case-insensitive classifier, SUPPORTED_EXTENSIONS/SUPPORTED_PLATFORMS constants, README platform table, 8 new tests (20 total).
+- 2026-10-26 — 005 pluggable-storage-backends: django-storages[s3], STORAGE_BACKEND (filesystem|s3) via birdroms/storage.build_storages, env MEDIA_ROOT, S3-compatible env config (endpoint/region/bucket/keys/domain/path-style), .env.example + README docs, 6 new tests (26 total).

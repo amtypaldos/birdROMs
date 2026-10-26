@@ -2,11 +2,15 @@ from pathlib import Path
 
 from django.conf import settings
 from django.contrib.auth.models import Group, User
+from django.core.files.storage import FileSystemStorage, StorageHandler, default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
+from storages.backends.s3 import S3Storage
+
+from birdroms.storage import FILESYSTEM_STORAGE, S3_STORAGE, build_storages
 
 from .models import ROM
 from .services import (
@@ -204,3 +208,68 @@ class PlatformOverrideTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         rom.refresh_from_db()
         self.assertEqual(rom.platform, "Sony PlayStation")
+
+
+class StorageBackendTests(SimpleTestCase):
+    S3_ENV = {
+        "STORAGE_BACKEND": "s3",
+        "S3_BUCKET_NAME": "roms",
+        "S3_ACCESS_KEY_ID": "test-access",
+        "S3_SECRET_ACCESS_KEY": "test-secret",
+        "S3_ENDPOINT_URL": "http://minio:9000",
+        "S3_REGION": "us-east-1",
+        "S3_CUSTOM_DOMAIN": "cdn.example.com",
+        "S3_PATH_STYLE": "true",
+    }
+
+    def test_filesystem_is_default(self):
+        storages_setting = build_storages({})
+        self.assertEqual(storages_setting["default"]["BACKEND"], FILESYSTEM_STORAGE)
+        self.assertEqual(build_storages({"STORAGE_BACKEND": "filesystem"}), storages_setting)
+
+    def test_s3_backend_selected_and_configured_from_env(self):
+        storages_setting = build_storages(self.S3_ENV)
+        default = storages_setting["default"]
+        self.assertEqual(default["BACKEND"], S3_STORAGE)
+        self.assertEqual(default["OPTIONS"]["bucket_name"], "roms")
+        self.assertEqual(default["OPTIONS"]["endpoint_url"], "http://minio:9000")
+        self.assertEqual(default["OPTIONS"]["addressing_style"], "path")
+        self.assertIsNone(default["OPTIONS"]["default_acl"])
+
+        # Wiring: Django instantiates S3Storage as default storage (no network needed).
+        storage = StorageHandler(storages_setting)["default"]
+        self.assertIsInstance(storage, S3Storage)
+        self.assertEqual(storage.bucket_name, "roms")
+        self.assertEqual(storage.endpoint_url, "http://minio:9000")
+        self.assertEqual(storage.region_name, "us-east-1")
+        self.assertEqual(storage.custom_domain, "cdn.example.com")
+        self.assertEqual(storage.addressing_style, "path")
+        self.assertEqual(storage.access_key, "test-access")
+
+    def test_s3_optional_settings_omitted_when_unset(self):
+        options = build_storages({"STORAGE_BACKEND": "S3", "S3_BUCKET_NAME": "roms"})["default"]["OPTIONS"]
+        for key in ("endpoint_url", "region_name", "custom_domain", "addressing_style"):
+            self.assertNotIn(key, options)
+
+    def test_unknown_backend_rejected(self):
+        with self.assertRaises(ValueError):
+            build_storages({"STORAGE_BACKEND": "ftp"})
+
+
+class FilesystemStorageRoundTripTests(APITestCase):
+    def test_tests_use_filesystem_storage(self):
+        self.assertIsInstance(default_storage, FileSystemStorage)
+
+    def test_uploaded_rom_round_trips(self):
+        admin = make_user("admin", "super_admin")
+        payload = b"\x4e\x45\x53\x1a" + bytes(range(64))
+        rom = ROM.objects.create(
+            title="Round Trip",
+            file=SimpleUploadedFile("trip.nes", payload),
+            uploaded_by=admin,
+        )
+        self.assertTrue(default_storage.exists(rom.file.name))
+        self.assertTrue(Path(rom.file.path).is_relative_to(Path(settings.MEDIA_ROOT)))
+        rom = ROM.objects.get(pk=rom.pk)
+        with rom.file.open("rb") as fh:
+            self.assertEqual(fh.read(), payload)

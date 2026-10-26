@@ -7,6 +7,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .storage import build_storages
+
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -82,7 +84,10 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", BASE_DIR / "media"))
+
+# Default file storage for ROMs and cover art; see birdroms/storage.py and .env.example.
+STORAGES = build_storages(os.environ)
 
 # `manage.py test` runs against in-memory SQLite and a throwaway media dir so the
 # suite needs no running PostgreSQL and never writes into the real MEDIA_ROOT.
@@ -90,6 +95,7 @@ TESTING = len(sys.argv) > 1 and sys.argv[1] == "test"
 if TESTING:
     DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}}
     MEDIA_ROOT = Path(tempfile.mkdtemp(prefix="birdroms-test-media-"))
+    STORAGES = build_storages({})
     atexit.register(shutil.rmtree, MEDIA_ROOT, ignore_errors=True)
     PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
