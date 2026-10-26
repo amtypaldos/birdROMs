@@ -97,8 +97,17 @@ export const api = {
       body: JSON.stringify(payload)
     });
   },
-  listRoms() {
-    return request("/roms/");
+  // Returns DRF's paginated envelope: { count, next, previous, results }.
+  listRoms({ search = "", platform = "", page = 1 } = {}) {
+    const params = new URLSearchParams();
+    if (search.trim()) params.set("search", search.trim());
+    if (platform) params.set("platform", platform);
+    if (page > 1) params.set("page", String(page));
+    const query = params.toString();
+    return request(`/roms/${query ? `?${query}` : ""}`);
+  },
+  listPlatforms() {
+    return request("/roms/platforms/");
   },
   createRom(formData) {
     return request("/roms/", { method: "POST", body: formData });
