@@ -8,6 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from .storage import build_storages
+from .uploads import parse_max_upload_bytes
 
 load_dotenv()
 
@@ -88,6 +89,9 @@ MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", BASE_DIR / "media"))
 
 # Default file storage for ROMs and cover art; see birdroms/storage.py and .env.example.
 STORAGES = build_storages(os.environ)
+
+# Largest accepted ROM upload, in bytes (default 2 GiB); see birdroms/uploads.py.
+MAX_ROM_UPLOAD_BYTES = parse_max_upload_bytes(os.environ)
 
 # `manage.py test` runs against in-memory SQLite and a throwaway media dir so the
 # suite needs no running PostgreSQL and never writes into the real MEDIA_ROOT.

@@ -133,6 +133,18 @@ Disc images are shared by many systems (Saturn, Sega CD, PlayStation, PS2, PSP, 
 the generic "Disc Image" label — set `platform` explicitly (e.g. `Sega Saturn`, `Sony
 PlayStation 2`) when uploading them.
 
+## Upload Validation
+
+Uploads are treated as untrusted. `POST /api/roms/` returns `400` with an error on the `file`
+field when:
+
+- the extension (checked case-insensitively) is not in the table above. That table is the
+  complete allowlist and includes `.zip`/`.7z` archives. Files with no extension are rejected too.
+- the file is empty (0 bytes).
+- the file is larger than `MAX_ROM_UPLOAD_BYTES`, which defaults to `2147483648` (2 GiB) and can
+  be set in the environment. If a reverse proxy sits in front of the app, raise its body-size
+  limit to match.
+
 ## File Storage
 
 ROM files and cover art go to Django's default storage. You choose the backend with
