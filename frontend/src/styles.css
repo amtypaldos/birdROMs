@@ -73,3 +73,28 @@ a.button {
   color: #a3acc2;
   margin: 0;
 }
+
+.session {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.role-badge {
+  display: inline-block;
+  margin-left: 0.3rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid #4c5874;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  color: #c9d1e3;
+}
+
+.role-badge.admin {
+  border-color: #3b5bdb;
+  background: #3b5bdb33;
+  color: #dbe4ff;
+}

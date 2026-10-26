@@ -179,6 +179,66 @@ describe("App", () => {
     expect(api.listRoms).toHaveBeenLastCalledWith({ search: "zel", platform: "NES", page: 1 });
   });
 
+  it("hides upload and scrape controls from readonly users", async () => {
+    getToken.mockReturnValue("tok");
+    api.listRoms.mockResolvedValue(page([{ id: 1, title: "Zelda", platform: "NES", extension: ".nes" }]));
+
+    render(<App />);
+
+    expect(await screen.findByText("Zelda")).toBeInTheDocument();
+    expect(await screen.findByText("alice")).toBeInTheDocument();
+    expect(screen.getByText("readonly")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Upload ROM" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Upload" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Scrape Cover" })).not.toBeInTheDocument();
+  });
+
+  it("shows upload and scrape controls to super_admin users", async () => {
+    getToken.mockReturnValue("tok");
+    api.me.mockResolvedValueOnce({ id: 2, username: "root", email: "", role: "super_admin" });
+    api.listRoms.mockResolvedValue(page([{ id: 1, title: "Zelda", platform: "NES", extension: ".nes" }]));
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Upload ROM" })).toBeInTheDocument();
+    expect(screen.getByText("root")).toBeInTheDocument();
+    expect(screen.getByText("super_admin")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Scrape Cover" })).toBeInTheDocument();
+  });
+
+  it("renders no write controls before the user's role is known", async () => {
+    getToken.mockReturnValue("tok");
+    api.me.mockReturnValueOnce(new Promise(() => {}));
+    api.listRoms.mockResolvedValue(page([{ id: 1, title: "Zelda", platform: "NES", extension: ".nes" }]));
+
+    render(<App />);
+
+    expect(await screen.findByText("Zelda")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Upload ROM" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Scrape Cover" })).not.toBeInTheDocument();
+  });
+
+  it("shows the role after a local login and logs out back to the login form", async () => {
+    api.login.mockResolvedValueOnce({ token: "loctok" });
+    api.me.mockResolvedValueOnce({ id: 2, username: "root", email: "", role: "super_admin" });
+
+    render(<App />);
+    fireEvent.change(await screen.findByPlaceholderText("Username"), { target: { value: "root" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "pw" } });
+    fireEvent.click(screen.getByRole("button", { name: "Login" }));
+
+    expect(await screen.findByRole("heading", { name: "Upload ROM" })).toBeInTheDocument();
+    expect(screen.getByText("super_admin")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Logout" }));
+
+    expect(setToken).toHaveBeenLastCalledWith(null);
+    expect(await screen.findByRole("heading", { name: "Login" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Upload ROM" })).not.toBeInTheDocument();
+    expect(screen.queryByText("root")).not.toBeInTheDocument();
+  });
+
   it("says when no ROMs match the filters", async () => {
     getToken.mockReturnValue("tok");
 

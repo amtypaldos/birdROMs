@@ -1,6 +1,6 @@
 # 011 — Role-aware frontend
 
-## Status: DRAFT
+## Status: COMPLETE
 Priority: 11
 
 ## Problem / Context
@@ -22,13 +22,13 @@ via Pocket ID + `/api/auth/me/` (spec 008), the UI should be role-aware.
 
 ## Completion Signal
 Implementation:
-- [ ] Current user + role displayed; Logout works.
-- [ ] Write controls gated on `super_admin`.
+- [x] Current user + role displayed; Logout works.
+- [x] Write controls gated on `super_admin`.
 
 Testing:
-- [ ] Frontend test: readonly user does not see Upload; super_admin does.
-- [ ] `yarn test`, `yarn lint`, `yarn build` pass.
+- [x] Frontend test: readonly user does not see Upload; super_admin does.
+- [x] `yarn test`, `yarn lint`, `yarn build` pass.
 
 Commit and push. Output `<promise>DONE</promise>` only when all boxes are verified.
 
-<!-- NR_OF_TRIES: 0 -->
+<!-- NR_OF_TRIES: 1 -->
