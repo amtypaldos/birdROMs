@@ -1,0 +1,12 @@
+.venv/
+.env
+.env.*
+!.env.example
+media/
+staticfiles/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+Dockerfile
+.dockerignore

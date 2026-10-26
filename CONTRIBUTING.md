@@ -5,6 +5,9 @@ and what we expect from a pull request.
 
 ## Prerequisites
 
+The quickest setup needs only Docker: `docker compose up --build` runs the whole stack with
+hot reload (see the README's Quick Start). To run things directly on your machine instead:
+
 - Python 3 and [uv](https://docs.astral.sh/uv/) for the backend
 - Node.js with corepack (run `corepack enable` once to get Yarn) for the frontend
 - PostgreSQL for running the dev server — the root `docker-compose.yml` starts one:

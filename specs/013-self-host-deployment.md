@@ -1,6 +1,6 @@
 # 013 — Docker-first self-host deployment
 
-## Status: DRAFT
+## Status: COMPLETE
 Priority: 13
 
 ## Problem / Context
@@ -29,16 +29,16 @@ blessed Docker deploy path.
 
 ## Completion Signal
 Implementation:
-- [ ] Dev `docker compose up` runs the whole stack.
-- [ ] Production Dockerfiles + `docker-compose.prod.yml`, fully env-driven.
-- [ ] Complete `.env.example`.
-- [ ] `SELF_HOSTING.md` end-to-end Docker guide, linked as the recommended path from README.
+- [x] Dev `docker compose up` runs the whole stack.
+- [x] Production Dockerfiles + `docker-compose.prod.yml`, fully env-driven.
+- [x] Complete `.env.example`.
+- [x] `SELF_HOSTING.md` end-to-end Docker guide, linked as the recommended path from README.
 
 Testing:
-- [ ] `docker compose config` and `docker compose -f docker-compose.prod.yml config` parse cleanly.
-- [ ] Backend + frontend test/build suites still pass.
-- [ ] Smoke test steps documented (and run if the environment allows).
+- [x] `docker compose config` and `docker compose -f docker-compose.prod.yml config` parse cleanly.
+- [x] Backend + frontend test/build suites still pass.
+- [x] Smoke test steps documented (and run if the environment allows).
 
 Commit and push. Output `<promise>DONE</promise>` only when all boxes are verified.
 
-<!-- NR_OF_TRIES: 0 -->
+<!-- NR_OF_TRIES: 1 -->
