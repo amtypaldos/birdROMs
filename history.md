@@ -1,0 +1,1 @@
+- 2026-10-26 — 001 backend-test-harness: SQLite/temp-media test settings + accounts & ROM API tests (12 tests), README Testing section.

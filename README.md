@@ -52,6 +52,16 @@ Frontend expects backend API at `http://localhost:8000/api`.
 
 If Yarn is not already available, run `corepack enable` once.
 
+## Testing
+
+Backend tests run against an in-memory SQLite database and a temporary media directory,
+so no PostgreSQL server (and no `.env`) is needed:
+
+```bash
+cd backend
+uv run python manage.py test
+```
+
 ## Auth and Roles
 
 Roles are implemented as user groups:
