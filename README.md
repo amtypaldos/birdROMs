@@ -62,6 +62,14 @@ cd backend
 uv run python manage.py test
 ```
 
+Frontend lint and tests (ESLint + Vitest/React Testing Library on jsdom, no backend needed):
+
+```bash
+cd frontend
+yarn lint
+yarn test
+```
+
 ## Auth and Roles
 
 Roles are implemented as user groups:
