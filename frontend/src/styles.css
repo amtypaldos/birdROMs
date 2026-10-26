@@ -58,3 +58,18 @@ button {
 .error {
   color: #ff8787;
 }
+
+a.button {
+  display: inline-block;
+  text-align: center;
+  text-decoration: none;
+  color: #f2f4f8;
+  background: #3b5bdb;
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+}
+
+.muted {
+  color: #a3acc2;
+  margin: 0;
+}

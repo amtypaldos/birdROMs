@@ -1,0 +1,124 @@
+import re
+
+from django.conf import settings
+from django.contrib.auth.models import Group, User
+from django.db import transaction
+
+from .models import OIDCIdentity
+
+SUPER_ADMIN = "super_admin"
+READONLY = "readonly"
+ROLE_GROUPS = (SUPER_ADMIN, READONLY)
+
+_oidc_clients = {}
+
+
+def local_login_enabled() -> bool:
+    return "local" in settings.AUTH_METHODS or settings.ALLOW_LOCAL_LOGIN
+
+
+def oidc_enabled() -> bool:
+    return "oidc" in settings.AUTH_METHODS
+
+
+def enabled_methods() -> list:
+    methods = []
+    if local_login_enabled():
+        methods.append("local")
+    if oidc_enabled():
+        methods.append("oidc")
+    return methods
+
+
+def user_role(user):
+    """The user's birdROMs role: `super_admin`, `readonly`, or None if they have neither."""
+    if user.is_superuser or user.groups.filter(name=SUPER_ADMIN).exists():
+        return SUPER_ADMIN
+    if user.groups.filter(name=READONLY).exists():
+        return READONLY
+    return None
+
+
+def set_role(user, role):
+    """Put the user in exactly one role group."""
+    user.groups.remove(*Group.objects.filter(name__in=ROLE_GROUPS).exclude(name=role))
+    group, _ = Group.objects.get_or_create(name=role)
+    user.groups.add(group)
+
+
+def get_oidc_client():
+    """An authlib client for the configured provider, cached per config (discovery is fetched lazily)."""
+    from authlib.integrations.django_client import OAuth
+
+    config = settings.OIDC
+    key = (config["DISCOVERY_URL"], config["CLIENT_ID"], config["CLIENT_SECRET"], config["SCOPES"])
+    if key not in _oidc_clients:
+        oauth = OAuth()
+        _oidc_clients[key] = oauth.register(
+            name="birdroms_oidc",
+            server_metadata_url=config["DISCOVERY_URL"],
+            client_id=config["CLIENT_ID"],
+            client_secret=config["CLIENT_SECRET"],
+            client_kwargs={"scope": config["SCOPES"], "code_challenge_method": "S256"},
+        )
+    return _oidc_clients[key]
+
+
+def role_from_claims(claims):
+    config = settings.OIDC
+    admin_group = config["ADMIN_GROUP"]
+    groups = claims.get(config["GROUPS_CLAIM"]) or []
+    if isinstance(groups, str):
+        groups = [groups]
+    return SUPER_ADMIN if admin_group and admin_group in groups else READONLY
+
+
+def _unique_username(claims):
+    email = claims.get("email") or ""
+    base = claims.get("preferred_username") or email.split("@")[0] or f"oidc-{claims['sub']}"
+    base = re.sub(r"[^\w.@+-]", "_", base)[:140] or "oidc-user"
+    candidate, n = base, 1
+    while User.objects.filter(username__iexact=candidate).exists():
+        n += 1
+        candidate = f"{base}-{n}"
+    return candidate
+
+
+@transaction.atomic
+def provision_oidc_user(claims):
+    """
+    Find or create the Django user for a verified set of OIDC claims and sync their role.
+
+    Users are matched on the stable `(issuer, sub)` pair. With `OIDC_LINK_BY_EMAIL`, a first
+    login may instead attach to an existing user with the same email, but only when the provider
+    marks that email as verified. The role group is re-synced from the claims on every login so
+    that removing someone from `OIDC_ADMIN_GROUP` at the provider takes effect.
+    """
+    config = settings.OIDC
+    issuer = claims.get("iss") or config["ISSUER"]
+    subject = str(claims["sub"])
+    email = claims.get("email") or ""
+
+    identity = OIDCIdentity.objects.select_related("user").filter(issuer=issuer, subject=subject).first()
+    if identity:
+        user = identity.user
+    else:
+        user = None
+        if config["LINK_BY_EMAIL"] and email and claims.get("email_verified") is True:
+            matches = list(User.objects.filter(email__iexact=email)[:2])
+            if len(matches) == 1 and not hasattr(matches[0], "oidc_identity"):
+                user = matches[0]
+        if user is None:
+            user = User(username=_unique_username(claims), email=email)
+            user.set_unusable_password()
+            user.save()
+        OIDCIdentity.objects.create(user=user, issuer=issuer, subject=subject)
+
+    if not user.is_active:
+        return user
+    if email and user.email != email:
+        user.email = email
+        user.save(update_fields=["email"])
+    if not user.is_superuser:
+        set_role(user, role_from_claims(claims))
+    return user

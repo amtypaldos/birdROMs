@@ -1,15 +1,20 @@
 import { useEffect, useState } from "react";
-import { api, getToken, setToken } from "./api/client";
+import { api, consumeOidcFragment, getToken, setToken } from "./api/client";
 
-function AuthPanel({ onAuthed }) {
+function LocalAuthForm({ onAuthed }) {
+  const [mode, setMode] = useState("login");
   const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const registering = mode === "register";
 
-  async function handleLogin(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
     try {
-      const data = await api.login({ username, password });
+      const data = registering
+        ? await api.register({ username, email, password })
+        : await api.login({ username, password });
       setToken(data.token);
       setError("");
       onAuthed();
@@ -19,16 +24,43 @@ function AuthPanel({ onAuthed }) {
   }
 
   return (
+    <form className="stack" onSubmit={handleSubmit}>
+      <input placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
+      {registering ? (
+        <input placeholder="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+      ) : null}
+      <input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+      {error ? <p className="error">{error}</p> : null}
+      <div className="row">
+        <button type="submit">{registering ? "Register" : "Login"}</button>
+        <button type="button" onClick={() => setMode(registering ? "login" : "register")}>
+          {registering ? "Back to login" : "Create account"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function AuthPanel({ config, onAuthed }) {
+  if (!config) {
+    return <section className="card">Loading sign-in options…</section>;
+  }
+  const local = config.methods.includes("local");
+  const oidc = config.methods.includes("oidc");
+
+  return (
     <section className="card">
       <h2>Login</h2>
-      <form className="stack" onSubmit={handleLogin}>
-        <input placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
-        <input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        {error ? <p className="error">{error}</p> : null}
-        <div className="row">
-          <button type="submit">Login</button>
-        </div>
-      </form>
+      <div className="stack">
+        {oidc ? (
+          <a className="button" href={api.oidcLoginUrl}>
+            Login with {config.oidc?.provider_name || "SSO"}
+          </a>
+        ) : null}
+        {local && oidc ? <p className="muted">or</p> : null}
+        {local ? <LocalAuthForm onAuthed={onAuthed} /> : null}
+        {!local && !oidc ? <p className="error">No login methods are enabled on this server.</p> : null}
+      </div>
     </section>
   );
 }
@@ -83,10 +115,20 @@ function RomList({ roms, onScrape, onDownload }) {
   );
 }
 
+// Pick up an SSO callback result before the first render so the app starts signed in.
+function initialAuth() {
+  const result = consumeOidcFragment();
+  if (result?.token) setToken(result.token);
+  return { authed: Boolean(getToken()), error: result?.error || "" };
+}
+
 export default function App() {
+  const [initial] = useState(initialAuth);
   const [roms, setRoms] = useState([]);
-  const [authed, setAuthed] = useState(Boolean(getToken()));
-  const [error, setError] = useState("");
+  const [authed, setAuthed] = useState(initial.authed);
+  const [error, setError] = useState(initial.error);
+  const [authConfig, setAuthConfig] = useState(null);
+  const [me, setMe] = useState(null);
 
   async function loadRoms() {
     try {
@@ -101,8 +143,15 @@ export default function App() {
   useEffect(() => {
     if (authed) {
       loadRoms();
+      api.me().then(setMe, () => logout());
     }
   }, [authed]);
+
+  useEffect(() => {
+    if (!authed && !authConfig) {
+      api.authConfig().then(setAuthConfig, (err) => setError(String(err.message || err)));
+    }
+  }, [authed, authConfig]);
 
   async function downloadRom(rom) {
     try {
@@ -117,15 +166,22 @@ export default function App() {
     setToken(null);
     setAuthed(false);
     setRoms([]);
+    setMe(null);
   }
 
   return (
     <main className="container">
       <h1>birdROMs</h1>
       {error ? <p className="error">{error}</p> : null}
-      {!authed ? <AuthPanel onAuthed={() => setAuthed(true)} /> : null}
+      {!authed ? <AuthPanel config={authConfig} onAuthed={() => setAuthed(true)} /> : null}
       {authed ? (
         <>
+          {me ? (
+            <p className="muted">
+              Signed in as <strong>{me.username}</strong>
+              {me.role ? ` (${me.role})` : ""}
+            </p>
+          ) : null}
           <div className="row">
             <button onClick={loadRoms}>Refresh</button>
             <button onClick={logout}>Logout</button>
