@@ -1,6 +1,6 @@
 # 004 — Expanded platform & file-type support
 
-## Status: DRAFT
+## Status: COMPLETE
 Priority: 4
 
 ## Problem / Context
@@ -30,14 +30,14 @@ needs to be comprehensive first.
 
 ## Completion Signal
 Implementation:
-- [ ] Expanded, documented extension→platform map.
-- [ ] Ambiguous extensions handled + manual override preserved.
-- [ ] README lists supported platforms.
+- [x] Expanded, documented extension→platform map.
+- [x] Ambiguous extensions handled + manual override preserved.
+- [x] README lists supported platforms.
 
 Testing:
-- [ ] Backend tests classify a representative sample across systems, including ambiguous ones.
-- [ ] `uv run python manage.py test` passes.
+- [x] Backend tests classify a representative sample across systems, including ambiguous ones.
+- [x] `uv run python manage.py test` passes.
 
 Commit and push. Output `<promise>DONE</promise>` only when all boxes are verified.
 
-<!-- NR_OF_TRIES: 0 -->
+<!-- NR_OF_TRIES: 1 -->

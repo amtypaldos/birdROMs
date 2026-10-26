@@ -89,7 +89,49 @@ Use Django admin to assign users to these groups after signup/creation.
 
 ## ROM Classification
 
-ROM classification is determined server-side from file extension. Unknown extensions are tagged as `unknown`.
+ROM classification is determined server-side from the file's final extension
+(case-insensitive, so `Super.Mario.World.SFC` is SNES). If an upload leaves `platform` blank it
+is filled in automatically; if `platform` is provided — on upload or later via `PATCH` — that
+value is kept as-is, so ambiguous files can be corrected manually. Unrecognized extensions are
+tagged as `unknown`.
+
+The canonical map is `EXTENSION_TO_PLATFORM` in `backend/apps/roms/services.py`
+(`SUPPORTED_EXTENSIONS` and `SUPPORTED_PLATFORMS` are derived from it).
+
+| Platform | Extensions |
+| --- | --- |
+| NES | `.nes` |
+| SNES | `.sfc`, `.smc` |
+| Nintendo 64 | `.n64`, `.z64`, `.v64` |
+| Nintendo GameCube | `.gcm`, `.rvz`, `.gcz` |
+| Nintendo Wii | `.wbfs` |
+| Game Boy | `.gb` |
+| Game Boy Color | `.gbc` |
+| Game Boy Advance | `.gba` |
+| Nintendo DS | `.nds` |
+| Nintendo 3DS | `.3ds`, `.cia` |
+| Sega Master System | `.sms` |
+| Sega Genesis | `.gen`, `.md`, `.smd` |
+| Sega Game Gear | `.gg` |
+| Sega 32X | `.32x` |
+| Sega Dreamcast | `.gdi`, `.cdi` |
+| Sony PlayStation | `.pbp` |
+| Sony PSP | `.cso` |
+| PC Engine / TurboGrafx-16 | `.pce` |
+| Neo Geo Pocket | `.ngp` |
+| Neo Geo Pocket Color | `.ngc` |
+| WonderSwan | `.ws` |
+| WonderSwan Color | `.wsc` |
+| Atari 2600 | `.a26` |
+| Atari 7800 | `.a78` |
+| Atari Lynx | `.lnx` |
+| Atari Jaguar | `.jag`, `.j64` |
+| Disc Image (generic) | `.iso`, `.bin`, `.cue`, `.chd` |
+| Archive (generic) | `.zip`, `.7z` |
+
+Disc images are shared by many systems (Saturn, Sega CD, PlayStation, PS2, PSP, …), so they get
+the generic "Disc Image" label — set `platform` explicitly (e.g. `Sega Saturn`, `Sony
+PlayStation 2`) when uploading them.
 
 ## Cover Art Scraping
 

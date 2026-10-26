@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.db import models
 
-from .services import classify_platform_from_extension
+from .services import classify_platform_from_extension, get_extension
 
 
 class ROM(models.Model):
@@ -19,10 +19,9 @@ class ROM(models.Model):
 
     def save(self, *args, **kwargs):
         if self.file and self.file.name:
-            filename = self.file.name.lower()
-            self.extension = f".{filename.split('.')[-1]}" if "." in filename else ""
+            self.extension = get_extension(self.file.name)
             if not self.platform:
-                self.platform = classify_platform_from_extension(filename)
+                self.platform = classify_platform_from_extension(self.file.name)
         super().save(*args, **kwargs)
 
     def __str__(self):
