@@ -26,6 +26,11 @@ dist/
 # --- Ralph runtime output ---
 logs/
 
+# --- direnv (holds a personal config-dir path and/or token) ---
+.envrc
+.envrc.local
+.direnv/
+
 # --- OS / editor cruft ---
 .DS_Store
 *.swp

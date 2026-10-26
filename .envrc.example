@@ -1,0 +1,25 @@
+# birdROMs — per-directory Claude Code account via direnv.
+#
+# Copy to .envrc, adjust the path, then run:  direnv allow
+#   cp .envrc.example .envrc && direnv allow
+#
+# This points the `claude` CLI (and therefore the Ralph loop) at a dedicated
+# config directory, so work in this project uses a specific Claude account
+# without touching your global ~/.claude login or the running desktop app.
+#
+# One-time, log that account into the dir below:
+#   CLAUDE_CONFIG_DIR="$HOME/.claude-work" claude   # then /login, then /status
+#
+# Requires direnv installed and hooked into your shell:
+#   brew install direnv
+#   echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc   # (zsh; use your shell)
+
+export CLAUDE_CONFIG_DIR="$HOME/.claude-work"
+
+# Optional: pin the loop's model (overrides scripts/ralph-loop.sh default)
+# export CLAUDE_MODEL="claude-opus-5-5"
+
+# Do NOT commit secrets. If you need a long-lived token here (e.g. when the
+# macOS Keychain won't isolate accounts), keep it only in the gitignored
+# .envrc — ideally sourced from somewhere outside the repo:
+#   export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.secrets/birdroms-claude-token")"
