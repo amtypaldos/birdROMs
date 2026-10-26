@@ -63,6 +63,26 @@ describe("api client", () => {
     expect(options.headers.Authorization).toBeUndefined();
   });
 
+  it("builds the ROM list query from search, platform and page, skipping blanks", async () => {
+    const envelope = { count: 0, next: null, previous: null, results: [] };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(envelope) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await api.listRoms({ search: "  zelda ", platform: "Game Boy Advance", page: 2 })).toEqual(envelope);
+    await api.listRoms({ search: "", platform: "", page: 1 });
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/roms/?search=zelda&platform=Game+Boy+Advance&page=2");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/roms/");
+  });
+
+  it("fetches the distinct platform list", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(["NES"]) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await api.listPlatforms()).toEqual(["NES"]);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/roms/platforms/");
+  });
+
   it("downloads ROMs through the authenticated endpoint as a blob", async () => {
     const blob = new Blob(["NES"]);
     const fetchMock = vi.fn().mockResolvedValue({

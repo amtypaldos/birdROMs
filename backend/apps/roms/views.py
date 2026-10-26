@@ -6,6 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from .models import ROM
+from .pagination import ROMPagination
 from .permissions import IsSuperAdminOrReadOnlyRole
 from .serializers import ROMSerializer
 from .services import scrape_cover_art
@@ -23,12 +24,33 @@ def download_filename(rom):
 
 
 class ROMViewSet(viewsets.ModelViewSet):
-    queryset = ROM.objects.select_related("uploaded_by").all()
+    # `-id` breaks uploaded_at ties so pages never repeat or skip a ROM.
+    queryset = ROM.objects.select_related("uploaded_by").order_by("-uploaded_at", "-id")
     serializer_class = ROMSerializer
     permission_classes = [IsSuperAdminOrReadOnlyRole]
+    pagination_class = ROMPagination
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action != "list":
+            return queryset
+        search = self.request.query_params.get("search", "").strip()
+        platform = self.request.query_params.get("platform", "").strip()
+        if search:
+            queryset = queryset.filter(title__icontains=search)
+        if platform:
+            queryset = queryset.filter(platform=platform)
+        return queryset
 
     def perform_create(self, serializer):
         serializer.save(uploaded_by=self.request.user)
+
+    @action(detail=False, methods=["get"])
+    def platforms(self, request):
+        platforms = (
+            ROM.objects.exclude(platform="").order_by("platform").values_list("platform", flat=True).distinct()
+        )
+        return Response(list(platforms))
 
     @action(detail=True, methods=["post"])
     def scrape_cover(self, request, pk=None):

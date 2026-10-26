@@ -224,6 +224,19 @@ ROM files and cover art go to Django's default storage. You choose the backend w
 
 Every variable is documented in `backend/.env.example`.
 
+## Browsing the library
+
+`GET /api/roms/` is paginated and returns `{count, next, previous, results}`, 24 ROMs per page
+by default. Use `?page=N` to move between pages and `?page_size=N` to change the size (max 100).
+A page past the end returns 404. Filters:
+
+- `?search=zelda` matches part of the title, ignoring case.
+- `?platform=NES` matches the platform exactly (use the names from the platform table).
+
+You can combine filters and pagination, for example `?search=zelda&platform=Game+Boy+Advance&page=2`.
+`GET /api/roms/platforms/` lists the platforms that have at least one ROM, sorted by name. The web UI
+uses it for the platform dropdown. Both endpoints need a `readonly` or `super_admin` user.
+
 ## Downloads
 
 ROMs are private. Django never serves `MEDIA_ROOT` directly, and the API does not return a

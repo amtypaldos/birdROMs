@@ -70,7 +70,7 @@ class ROMPermissionTests(APITestCase):
         response = self.client.get(self.list_url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual([rom["title"] for rom in response.data], ["Existing"])
+        self.assertEqual([rom["title"] for rom in response.data["results"]], ["Existing"])
 
     def test_readonly_cannot_create(self):
         self.client.force_authenticate(self.readonly_user)
@@ -324,7 +324,7 @@ class ROMDownloadTests(APITestCase):
 
     def test_serializer_exposes_download_endpoint_not_media_url(self):
         self.client.force_authenticate(make_user("reader", "readonly"))
-        data = self.client.get(reverse("rom-list")).data[0]
+        data = self.client.get(reverse("rom-list")).data["results"][0]
         self.assertNotIn("file", data)
         self.assertNotIn(settings.MEDIA_URL, str(data))
         self.assertTrue(data["download_url"].endswith(self.url), data["download_url"])
@@ -407,3 +407,108 @@ class UploadSizeSettingTests(SimpleTestCase):
         for value in ("abc", "0", "-5"):
             with self.subTest(value=value), self.assertRaises(ImproperlyConfigured):
                 parse_max_upload_bytes({"MAX_ROM_UPLOAD_BYTES": value})
+
+
+class ROMListQueryTests(APITestCase):
+    list_url = reverse("rom-list")
+    platforms_url = reverse("rom-platforms")
+
+    def setUp(self):
+        self.admin_user = make_user("admin", "super_admin")
+        self.client.force_authenticate(make_user("reader", "readonly"))
+
+    def add(self, title, filename):
+        return ROM.objects.create(title=title, file=dummy_rom(filename), uploaded_by=self.admin_user)
+
+    def titles(self, response):
+        return sorted(rom["title"] for rom in response.data["results"])
+
+    def test_list_returns_paginated_envelope(self):
+        self.add("Zelda", "zelda.nes")
+
+        response = self.client.get(self.list_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(set(response.data), {"count", "next", "previous", "results"})
+        self.assertEqual(response.data["count"], 1)
+        self.assertIsNone(response.data["next"])
+        self.assertIsNone(response.data["previous"])
+
+    def test_default_page_size_is_24_and_pages_link(self):
+        for i in range(30):
+            self.add(f"Game {i:02d}", f"game{i}.nes")
+
+        first = self.client.get(self.list_url)
+        self.assertEqual(first.data["count"], 30)
+        self.assertEqual(len(first.data["results"]), 24)
+        self.assertIsNotNone(first.data["next"])
+
+        second = self.client.get(self.list_url, {"page": 2})
+        self.assertEqual(len(second.data["results"]), 6)
+        self.assertIsNone(second.data["next"])
+        self.assertIsNotNone(second.data["previous"])
+        seen = {rom["id"] for rom in first.data["results"]} | {rom["id"] for rom in second.data["results"]}
+        self.assertEqual(len(seen), 30)
+
+    def test_page_size_param_is_capped(self):
+        for i in range(3):
+            self.add(f"Game {i}", f"game{i}.nes")
+        self.assertEqual(len(self.client.get(self.list_url, {"page_size": 2}).data["results"]), 2)
+        self.assertEqual(len(self.client.get(self.list_url, {"page_size": 100000}).data["results"]), 3)
+
+    def test_out_of_range_page_returns_404(self):
+        self.add("Zelda", "zelda.nes")
+        self.assertEqual(self.client.get(self.list_url, {"page": 9}).status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_search_is_case_insensitive_partial_title_match(self):
+        self.add("The Legend of Zelda", "zelda.nes")
+        self.add("Zelda II", "zelda2.nes")
+        self.add("Metroid", "metroid.nes")
+
+        response = self.client.get(self.list_url, {"search": "zELd"})
+
+        self.assertEqual(response.data["count"], 2)
+        self.assertEqual(self.titles(response), ["The Legend of Zelda", "Zelda II"])
+
+    def test_platform_filter_is_exact(self):
+        self.add("Zelda", "zelda.nes")
+        self.add("Minish Cap", "minish.gba")
+
+        response = self.client.get(self.list_url, {"platform": "Game Boy Advance"})
+        self.assertEqual(self.titles(response), ["Minish Cap"])
+
+        partial = self.client.get(self.list_url, {"platform": "Game Boy"})
+        self.assertEqual(partial.data["count"], 0)
+
+    def test_search_and_platform_combine(self):
+        self.add("Zelda", "zelda.nes")
+        self.add("Zelda Minish Cap", "minish.gba")
+        self.add("Metroid Fusion", "fusion.gba")
+
+        response = self.client.get(self.list_url, {"search": "zelda", "platform": "Game Boy Advance"})
+
+        self.assertEqual(self.titles(response), ["Zelda Minish Cap"])
+
+    def test_blank_filters_are_ignored(self):
+        self.add("Zelda", "zelda.nes")
+        response = self.client.get(self.list_url, {"search": "  ", "platform": ""})
+        self.assertEqual(response.data["count"], 1)
+
+    def test_platforms_endpoint_lists_distinct_sorted_platforms(self):
+        self.add("Zelda", "zelda.nes")
+        self.add("Metroid", "metroid.nes")
+        self.add("Minish Cap", "minish.gba")
+
+        response = self.client.get(self.platforms_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data, ["Game Boy Advance", "NES"])
+
+    def test_platforms_endpoint_requires_a_role(self):
+        self.client.force_authenticate(make_user("nobody"))
+        self.assertEqual(self.client.get(self.platforms_url).status_code, status.HTTP_403_FORBIDDEN)
+        self.client.force_authenticate(None)
+        self.assertIn(
+            self.client.get(self.platforms_url).status_code,
+            (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN),
+        )
