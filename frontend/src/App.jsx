@@ -25,15 +25,35 @@ function LocalAuthForm({ onAuthed }) {
 
   return (
     <form className="stack" onSubmit={handleSubmit}>
-      <input placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
+      <input
+        aria-label="Username"
+        placeholder="Username"
+        autoComplete="username"
+        value={username}
+        onChange={(e) => setUsername(e.target.value)}
+      />
       {registering ? (
-        <input placeholder="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <input
+          aria-label="Email"
+          placeholder="Email"
+          type="email"
+          autoComplete="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
       ) : null}
-      <input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-      {error ? <p className="error">{error}</p> : null}
+      <input
+        aria-label="Password"
+        placeholder="Password"
+        type="password"
+        autoComplete={registering ? "new-password" : "current-password"}
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+      />
+      {error ? <p className="error" role="alert">{error}</p> : null}
       <div className="row">
-        <button type="submit">{registering ? "Register" : "Login"}</button>
-        <button type="button" onClick={() => setMode(registering ? "login" : "register")}>
+        <button type="submit" className="primary">{registering ? "Register" : "Login"}</button>
+        <button type="button" className="ghost" onClick={() => setMode(registering ? "login" : "register")}>
           {registering ? "Back to login" : "Create account"}
         </button>
       </div>
@@ -43,21 +63,26 @@ function LocalAuthForm({ onAuthed }) {
 
 function AuthPanel({ config, onAuthed }) {
   if (!config) {
-    return <section className="card">Loading sign-in options…</section>;
+    return (
+      <section className="card auth-card">
+        <p className="muted loading-text">Loading sign-in options…</p>
+      </section>
+    );
   }
   const local = config.methods.includes("local");
   const oidc = config.methods.includes("oidc");
 
   return (
-    <section className="card">
+    <section className="card auth-card">
+      <p className="eyebrow" aria-hidden="true">Insert coin</p>
       <h2>Login</h2>
       <div className="stack">
         {oidc ? (
-          <a className="button" href={api.oidcLoginUrl}>
+          <a className="button primary" href={api.oidcLoginUrl}>
             Login with {config.oidc?.provider_name || "SSO"}
           </a>
         ) : null}
-        {local && oidc ? <p className="muted">or</p> : null}
+        {local && oidc ? <p className="divider">or</p> : null}
         {local ? <LocalAuthForm onAuthed={onAuthed} /> : null}
         {!local && !oidc ? <p className="error">No login methods are enabled on this server.</p> : null}
       </div>
@@ -68,27 +93,52 @@ function AuthPanel({ config, onAuthed }) {
 function UploadPanel({ onUploaded }) {
   const [title, setTitle] = useState("");
   const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const fileInput = useRef(null);
 
   async function handleUpload(event) {
     event.preventDefault();
-    if (!file) return;
+    if (!file || busy) return;
     const formData = new FormData();
     formData.append("title", title || file.name);
     formData.append("file", file);
-    await api.createRom(formData);
-    setTitle("");
-    setFile(null);
-    onUploaded();
+    setBusy(true);
+    try {
+      await api.createRom(formData);
+      setTitle("");
+      setFile(null);
+      if (fileInput.current) fileInput.current.value = "";
+      setError("");
+      onUploaded();
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
-    <section className="card">
+    <section className="card upload-card">
       <h2>Upload ROM</h2>
-      <form className="stack" onSubmit={handleUpload}>
-        <input placeholder="ROM title" value={title} onChange={(e) => setTitle(e.target.value)} />
-        <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-        <button type="submit">Upload</button>
+      <form className="upload-form" onSubmit={handleUpload}>
+        <input
+          aria-label="ROM title"
+          placeholder="ROM title"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
+        <input
+          ref={fileInput}
+          aria-label="ROM file"
+          type="file"
+          onChange={(e) => setFile(e.target.files?.[0] || null)}
+        />
+        <button type="submit" className="primary" disabled={!file || busy}>
+          {busy ? "Uploading…" : "Upload"}
+        </button>
       </form>
+      {error ? <p className="error" role="alert">{error}</p> : null}
     </section>
   );
 }
@@ -106,9 +156,15 @@ function LibraryFilters({ query, platforms, onChange }) {
   }
 
   return (
-    <form className="row" role="search" onSubmit={handleSearch}>
-      <input placeholder="Search titles" value={search} onChange={(e) => setSearch(e.target.value)} />
-      <button type="submit">Search</button>
+    <form className="filters" role="search" onSubmit={handleSearch}>
+      <input
+        type="search"
+        aria-label="Search titles"
+        placeholder="Search titles"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+      />
+      <button type="submit" className="primary">Search</button>
       <select
         aria-label="Platform"
         value={query.platform}
@@ -128,17 +184,17 @@ function LibraryFilters({ query, platforms, onChange }) {
 function Pagination({ romPage, page, onPage }) {
   const pages = Math.max(1, Math.ceil(romPage.count / PAGE_SIZE));
   return (
-    <div className="row">
+    <nav className="pagination" aria-label="Pagination">
       <button disabled={!romPage.previous} onClick={() => onPage(page - 1)}>
         Previous
       </button>
-      <span className="muted">
+      <span className="muted page-count">
         Page {page} of {pages} · {romPage.count} ROM{romPage.count === 1 ? "" : "s"}
       </span>
       <button disabled={!romPage.next} onClick={() => onPage(page + 1)}>
         Next
       </button>
-    </div>
+    </nav>
   );
 }
 
@@ -163,30 +219,85 @@ function CoverImage({ rom }) {
     };
   }, [rom]);
 
-  return src ? <img src={src} alt={rom.title} className="cover" /> : null;
+  return (
+    <div className="cover-frame">
+      {src ? <img src={src} alt={rom.title} className="cover" /> : <CoverPlaceholder rom={rom} />}
+    </div>
+  );
 }
 
-function RomList({ romPage, query, platforms, onQuery, onScrape, onDownload }) {
+// Platform families pick the badge/glow accent; anything unrecognised uses the default cyan.
+const PLATFORM_FAMILIES = [
+  ["nintendo", /\b(nes|snes|nintendo|game boy)\b/i],
+  ["sega", /\bsega\b/i],
+  ["sony", /\bsony\b/i],
+  ["atari", /\batari\b/i]
+];
+
+export function platformFamily(platform) {
+  const match = PLATFORM_FAMILIES.find(([, pattern]) => pattern.test(platform || ""));
+  return match ? match[0] : "other";
+}
+
+// Decorative stand-in "cartridge label" shown until (or instead of) real box art.
+function CoverPlaceholder({ rom }) {
+  const initial = (rom.title || "?").trim().charAt(0).toUpperCase() || "?";
   return (
-    <section className="card">
-      <h2>ROM Library</h2>
-      <div className="stack">
-        <LibraryFilters query={query} platforms={platforms} onChange={onQuery} />
-        {romPage.results.length === 0 ? <p className="muted">No ROMs found.</p> : null}
-        {romPage.results.map((rom) => (
-          <div key={rom.id} className="rom">
-            <div>
-              <strong>{rom.title}</strong> - {rom.platform} ({rom.extension})
-            </div>
-            <div className="row">
-              <button onClick={() => onDownload(rom)}>Download</button>
-              {onScrape ? <button onClick={() => onScrape(rom.id)}>Scrape Cover</button> : null}
-            </div>
-            <CoverImage rom={rom} />
-          </div>
-        ))}
-        <Pagination romPage={romPage} page={query.page} onPage={(page) => onQuery({ ...query, page })} />
+    <div className="cover-placeholder" aria-hidden="true">
+      <span className="cover-initial">{initial}</span>
+      <span className="cover-ext">{rom.extension || "ROM"}</span>
+    </div>
+  );
+}
+
+function RomCard({ rom, onScrape, onDownload }) {
+  const family = platformFamily(rom.platform);
+  return (
+    <li className="rom-card" data-family={family}>
+      <CoverImage rom={rom} />
+      <div className="rom-body">
+        <h3 className="rom-title" title={rom.title}>{rom.title}</h3>
+        <span className="platform-badge">{rom.platform || "Unknown"}</span>
       </div>
+      <div className="rom-actions">
+        <button className="primary" onClick={() => onDownload(rom)}>Download</button>
+        {onScrape ? <button className="ghost" onClick={() => onScrape(rom.id)}>Scrape Cover</button> : null}
+      </div>
+    </li>
+  );
+}
+
+const SKELETON_CARDS = 8;
+
+function RomList({ romPage, loading, query, platforms, onQuery, onScrape, onDownload }) {
+  const showSkeleton = loading && romPage.results.length === 0;
+  return (
+    <section className="library" aria-busy={loading}>
+      <div className="library-head">
+        <h2>ROM Library</h2>
+        <LibraryFilters query={query} platforms={platforms} onChange={onQuery} />
+      </div>
+      {showSkeleton ? (
+        <ul className="rom-grid" aria-label="Loading ROMs">
+          {Array.from({ length: SKELETON_CARDS }, (_, index) => (
+            <li key={index} className="rom-card skeleton" aria-hidden="true" />
+          ))}
+        </ul>
+      ) : null}
+      {!loading && romPage.results.length === 0 ? (
+        <div className="empty-state">
+          <p className="empty-title">No ROMs found.</p>
+          <p className="muted">Try a different search or platform.</p>
+        </div>
+      ) : null}
+      {romPage.results.length > 0 ? (
+        <ul className="rom-grid" aria-label="ROMs">
+          {romPage.results.map((rom) => (
+            <RomCard key={rom.id} rom={rom} onScrape={onScrape} onDownload={onDownload} />
+          ))}
+        </ul>
+      ) : null}
+      <Pagination romPage={romPage} page={query.page} onPage={(page) => onQuery({ ...query, page })} />
     </section>
   );
 }
@@ -195,9 +306,9 @@ const SUPER_ADMIN = "super_admin";
 
 function SessionBar({ me, onRefresh, onLogout }) {
   return (
-    <section className="card session">
+    <div className="session">
       {me ? (
-        <p className="muted">
+        <p className="muted session-user">
           Signed in as <strong>{me.username}</strong>{" "}
           <span className={`role-badge${me.role === SUPER_ADMIN ? " admin" : ""}`}>{me.role || "no role"}</span>
         </p>
@@ -205,10 +316,10 @@ function SessionBar({ me, onRefresh, onLogout }) {
         <p className="muted">Loading account…</p>
       )}
       <div className="row">
-        <button onClick={onRefresh}>Refresh</button>
-        <button onClick={onLogout}>Logout</button>
+        <button className="ghost" onClick={onRefresh}>Refresh</button>
+        <button className="ghost" onClick={onLogout}>Logout</button>
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -229,11 +340,13 @@ export default function App() {
   const [error, setError] = useState(initial.error);
   const [authConfig, setAuthConfig] = useState(null);
   const [me, setMe] = useState(null);
+  const [loading, setLoading] = useState(initial.authed);
 
   // Only the newest request may update the list, so a slow response for an old filter
   // cannot overwrite the results of a newer one.
   const loadRoms = useCallback(async () => {
     const requestId = ++latestRequest.current;
+    setLoading(true);
     try {
       const [data, platformList] = await Promise.all([api.listRoms(query), api.listPlatforms()]);
       if (requestId !== latestRequest.current) return;
@@ -243,6 +356,8 @@ export default function App() {
     } catch (err) {
       if (requestId !== latestRequest.current) return;
       setError(String(err.message || err));
+    } finally {
+      if (requestId === latestRequest.current) setLoading(false);
     }
   }, [query]);
 
@@ -254,6 +369,7 @@ export default function App() {
 
   useEffect(() => {
     if (authed) loadRoms();
+    else setLoading(false);
   }, [authed, loadRoms]);
 
   useEffect(() => {
@@ -284,24 +400,31 @@ export default function App() {
   const canWrite = me?.role === SUPER_ADMIN;
 
   return (
-    <main className="container">
-      <h1>birdROMs</h1>
-      {error ? <p className="error">{error}</p> : null}
-      {!authed ? <AuthPanel config={authConfig} onAuthed={() => setAuthed(true)} /> : null}
-      {authed ? (
-        <>
-          <SessionBar me={me} onRefresh={loadRoms} onLogout={logout} />
-          {canWrite ? <UploadPanel onUploaded={loadRoms} /> : null}
-          <RomList
-            romPage={romPage}
-            query={query}
-            platforms={platforms}
-            onQuery={setQuery}
-            onScrape={canWrite ? async (id) => { await api.scrapeCover(id); await loadRoms(); } : null}
-            onDownload={downloadRom}
-          />
-        </>
-      ) : null}
-    </main>
+    <>
+      <header className="topbar">
+        <h1 className="logo">
+          bird<span>ROMs</span>
+        </h1>
+        {authed ? <SessionBar me={me} onRefresh={loadRoms} onLogout={logout} /> : null}
+      </header>
+      <main className={`container${authed ? "" : " container-auth"}`}>
+        {error ? <p className="error banner" role="alert">{error}</p> : null}
+        {!authed ? <AuthPanel config={authConfig} onAuthed={() => setAuthed(true)} /> : null}
+        {authed ? (
+          <>
+            {canWrite ? <UploadPanel onUploaded={loadRoms} /> : null}
+            <RomList
+              romPage={romPage}
+              loading={loading}
+              query={query}
+              platforms={platforms}
+              onQuery={setQuery}
+              onScrape={canWrite ? async (id) => { await api.scrapeCover(id); await loadRoms(); } : null}
+              onDownload={downloadRom}
+            />
+          </>
+        ) : null}
+      </main>
+    </>
   );
 }

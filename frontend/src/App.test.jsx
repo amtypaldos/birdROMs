@@ -24,7 +24,7 @@ vi.mock("./api/client", () => ({
   }
 }));
 
-import App from "./App";
+import App, { platformFamily } from "./App";
 import { api, consumeOidcFragment, getToken, setToken } from "./api/client";
 
 describe("App", () => {
@@ -245,5 +245,51 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByText("No ROMs found.")).toBeInTheDocument();
+  });
+
+  it("renders the library as a grid of cover cards with platform badges and placeholders", async () => {
+    getToken.mockReturnValue("tok");
+    const zelda = { id: 1, title: "Zelda", platform: "NES", extension: ".nes", cover_art_url: "/api/roms/1/cover/" };
+    const sonic = { id: 2, title: "Sonic", platform: "Sega Genesis", extension: ".md", cover_art_url: null };
+    api.listRoms.mockResolvedValue(page([zelda, sonic]));
+    vi.stubGlobal("URL", { revokeObjectURL: vi.fn() }); // jsdom has no object URLs
+
+    const { container, unmount } = render(<App />);
+
+    const grid = await screen.findByRole("list", { name: "ROMs" });
+    const cards = grid.querySelectorAll("li.rom-card");
+    expect(cards).toHaveLength(2);
+    expect(await screen.findByRole("img", { name: "Zelda" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Sonic" })).toBeInTheDocument();
+    expect(screen.getByText("Sega Genesis")).toHaveClass("platform-badge");
+    expect(cards[0]).toHaveAttribute("data-family", "nintendo");
+    expect(cards[1]).toHaveAttribute("data-family", "sega");
+    // ROMs without art get a decorative placeholder that is hidden from assistive tech.
+    const placeholder = cards[1].querySelector(".cover-placeholder");
+    expect(placeholder).toHaveAttribute("aria-hidden", "true");
+    expect(placeholder).toHaveTextContent("S");
+    expect(container.querySelectorAll(".skeleton")).toHaveLength(0);
+    unmount();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows loading skeletons until the first page arrives", async () => {
+    getToken.mockReturnValue("tok");
+    api.listRoms.mockReturnValueOnce(new Promise(() => {}));
+
+    render(<App />);
+
+    expect(await screen.findByRole("list", { name: "Loading ROMs" })).toBeInTheDocument();
+    expect(screen.queryByText("No ROMs found.")).not.toBeInTheDocument();
+  });
+
+  it("maps platforms to badge families", () => {
+    expect(platformFamily("SNES")).toBe("nintendo");
+    expect(platformFamily("Game Boy Advance")).toBe("nintendo");
+    expect(platformFamily("Sega Dreamcast")).toBe("sega");
+    expect(platformFamily("Sony PSP")).toBe("sony");
+    expect(platformFamily("Atari Lynx")).toBe("atari");
+    expect(platformFamily("WonderSwan")).toBe("other");
+    expect(platformFamily(undefined)).toBe("other");
   });
 });
