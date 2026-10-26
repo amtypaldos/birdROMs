@@ -4,32 +4,29 @@ import { api, getToken, setToken } from "./api/client";
 function AuthPanel({ onAuthed }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [email, setEmail] = useState("");
+  const [error, setError] = useState("");
 
   async function handleLogin(event) {
     event.preventDefault();
-    const data = await api.login({ username, password });
-    setToken(data.token);
-    onAuthed();
-  }
-
-  async function handleRegister(event) {
-    event.preventDefault();
-    const data = await api.register({ username, password, email });
-    setToken(data.token);
-    onAuthed();
+    try {
+      const data = await api.login({ username, password });
+      setToken(data.token);
+      setError("");
+      onAuthed();
+    } catch (err) {
+      setError(String(err.message || err));
+    }
   }
 
   return (
     <section className="card">
-      <h2>Login / Register</h2>
-      <form className="stack">
+      <h2>Login</h2>
+      <form className="stack" onSubmit={handleLogin}>
         <input placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
-        <input placeholder="Email (for register)" value={email} onChange={(e) => setEmail(e.target.value)} />
         <input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        {error ? <p className="error">{error}</p> : null}
         <div className="row">
-          <button onClick={handleLogin}>Login</button>
-          <button onClick={handleRegister}>Register</button>
+          <button type="submit">Login</button>
         </div>
       </form>
     </section>
