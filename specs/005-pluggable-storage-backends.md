@@ -1,6 +1,6 @@
 # 005 — Pluggable storage backends (local/NFS + S3-compatible)
 
-## Status: DRAFT
+## Status: COMPLETE
 Priority: 5
 
 ## Problem / Context
@@ -21,16 +21,16 @@ storage (MinIO, Cloudflare R2, Backblaze B2, AWS S3). This must be selectable pu
 
 ## Completion Signal
 Implementation:
-- [ ] `django-storages` added; backend selected by `STORAGE_BACKEND`.
-- [ ] Filesystem (default) and S3-compatible configs implemented via env.
-- [ ] `.env.example` documents all storage vars.
+- [x] `django-storages` added; backend selected by `STORAGE_BACKEND`.
+- [x] Filesystem (default) and S3-compatible configs implemented via env.
+- [x] `.env.example` documents all storage vars.
 
 Testing:
-- [ ] Backend test: with `filesystem`, an uploaded file round-trips (save + read back).
-- [ ] Backend test: backend-selection logic picks the S3 storage class when `STORAGE_BACKEND=s3`
+- [x] Backend test: with `filesystem`, an uploaded file round-trips (save + read back).
+- [x] Backend test: backend-selection logic picks the S3 storage class when `STORAGE_BACKEND=s3`
       (no live S3 required — assert settings/storage wiring, mock as needed).
-- [ ] `uv run python manage.py test` passes.
+- [x] `uv run python manage.py test` passes.
 
 Commit and push. Output `<promise>DONE</promise>` only when all boxes are verified.
 
-<!-- NR_OF_TRIES: 0 -->
+<!-- NR_OF_TRIES: 1 -->
