@@ -1,6 +1,6 @@
 # 007 — ROM upload validation
 
-## Status: DRAFT
+## Status: COMPLETE
 Priority: 7
 
 ## Problem / Context
@@ -21,14 +21,14 @@ The allowlist derives from the expanded platform map (spec 004).
 
 ## Completion Signal
 Implementation:
-- [ ] Allowlist enforced from the platform map; archives included.
-- [ ] Env-configurable max size enforced.
-- [ ] Empty-file rejection.
+- [x] Allowlist enforced from the platform map; archives included.
+- [x] Env-configurable max size enforced.
+- [x] Empty-file rejection.
 
 Testing:
-- [ ] Backend tests: valid `.nes` ok; `.exe` → 400; oversized → 400; empty → 400.
-- [ ] `uv run python manage.py test` passes.
+- [x] Backend tests: valid `.nes` ok; `.exe` → 400; oversized → 400; empty → 400.
+- [x] `uv run python manage.py test` passes.
 
 Commit and push. Output `<promise>DONE</promise>` only when all boxes are verified.
 
-<!-- NR_OF_TRIES: 0 -->
+<!-- NR_OF_TRIES: 1 -->

@@ -4,13 +4,15 @@ from django.conf import settings
 from django.contrib.auth.models import Group, User
 from django.core.files.storage import FileSystemStorage, StorageHandler, default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import SimpleTestCase
+from django.core.exceptions import ImproperlyConfigured
+from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 from storages.backends.s3 import S3Storage
 
 from birdroms.storage import FILESYSTEM_STORAGE, S3_STORAGE, build_storages
+from birdroms.uploads import parse_max_upload_bytes
 
 from .models import ROM
 from .services import (
@@ -331,3 +333,77 @@ class ROMDownloadTests(APITestCase):
         self.client.force_authenticate(self.admin_user)
         response = self.client.get(settings.MEDIA_URL + self.rom.file.name)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class UploadValidationTests(APITestCase):
+    list_url = reverse("rom-list")
+
+    def setUp(self):
+        self.client.force_authenticate(make_user("admin", "super_admin"))
+
+    def upload(self, file, **extra):
+        return self.client.post(self.list_url, {"title": "Upload", "file": file, **extra}, format="multipart")
+
+    def test_valid_rom_is_accepted_and_classified(self):
+        response = self.upload(dummy_rom("Zelda.nes"))
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["platform"], "NES")
+        self.assertEqual(response.data["extension"], ".nes")
+
+    def test_archives_are_accepted(self):
+        for name in ("pack.zip", "pack.7z"):
+            with self.subTest(name=name):
+                self.assertEqual(self.upload(dummy_rom(name)).status_code, status.HTTP_201_CREATED)
+
+    def test_unknown_extension_rejected(self):
+        response = self.upload(dummy_rom("setup.exe"))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("file", response.data)
+        self.assertIn(".exe", str(response.data["file"]))
+        self.assertEqual(ROM.objects.count(), 0)
+
+    def test_missing_extension_rejected(self):
+        response = self.upload(dummy_rom("README"))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("file", response.data)
+
+    def test_extension_check_is_case_insensitive(self):
+        response = self.upload(dummy_rom("Metroid.GBA"))
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["extension"], ".gba")
+
+    def test_empty_file_rejected(self):
+        response = self.upload(SimpleUploadedFile("empty.nes", b""))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("file", response.data)
+        self.assertEqual(ROM.objects.count(), 0)
+
+    @override_settings(MAX_ROM_UPLOAD_BYTES=8)
+    def test_oversized_file_rejected(self):
+        response = self.upload(dummy_rom("big.nes"))  # 16 bytes
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("file", response.data)
+        self.assertEqual(ROM.objects.count(), 0)
+
+    @override_settings(MAX_ROM_UPLOAD_BYTES=16)
+    def test_file_at_limit_accepted(self):
+        self.assertEqual(self.upload(dummy_rom("exact.nes")).status_code, status.HTTP_201_CREATED)
+
+    def test_platform_can_be_patched_without_reuploading(self):
+        rom_id = self.upload(dummy_rom("Shenmue.chd")).data["id"]
+        response = self.client.patch(reverse("rom-detail", args=[rom_id]), {"platform": "Sega Dreamcast"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["platform"], "Sega Dreamcast")
+
+
+class UploadSizeSettingTests(SimpleTestCase):
+    def test_default_is_two_gib(self):
+        self.assertEqual(parse_max_upload_bytes({}), 2 * 1024**3)
+
+    def test_env_override(self):
+        self.assertEqual(parse_max_upload_bytes({"MAX_ROM_UPLOAD_BYTES": "1048576"}), 1048576)
+
+    def test_invalid_values_rejected(self):
+        for value in ("abc", "0", "-5"):
+            with self.subTest(value=value), self.assertRaises(ImproperlyConfigured):
+                parse_max_upload_bytes({"MAX_ROM_UPLOAD_BYTES": value})
