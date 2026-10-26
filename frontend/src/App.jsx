@@ -180,12 +180,33 @@ function RomList({ romPage, query, platforms, onQuery, onScrape, onDownload }) {
             </div>
             <div className="row">
               <button onClick={() => onDownload(rom)}>Download</button>
-              <button onClick={() => onScrape(rom.id)}>Scrape Cover</button>
+              {onScrape ? <button onClick={() => onScrape(rom.id)}>Scrape Cover</button> : null}
             </div>
             <CoverImage rom={rom} />
           </div>
         ))}
         <Pagination romPage={romPage} page={query.page} onPage={(page) => onQuery({ ...query, page })} />
+      </div>
+    </section>
+  );
+}
+
+const SUPER_ADMIN = "super_admin";
+
+function SessionBar({ me, onRefresh, onLogout }) {
+  return (
+    <section className="card session">
+      {me ? (
+        <p className="muted">
+          Signed in as <strong>{me.username}</strong>{" "}
+          <span className={`role-badge${me.role === SUPER_ADMIN ? " admin" : ""}`}>{me.role || "no role"}</span>
+        </p>
+      ) : (
+        <p className="muted">Loading account…</p>
+      )}
+      <div className="row">
+        <button onClick={onRefresh}>Refresh</button>
+        <button onClick={onLogout}>Logout</button>
       </div>
     </section>
   );
@@ -259,6 +280,9 @@ export default function App() {
     setMe(null);
   }
 
+  // Write controls are only rendered for super_admin, and not until the role is known.
+  const canWrite = me?.role === SUPER_ADMIN;
+
   return (
     <main className="container">
       <h1>birdROMs</h1>
@@ -266,23 +290,14 @@ export default function App() {
       {!authed ? <AuthPanel config={authConfig} onAuthed={() => setAuthed(true)} /> : null}
       {authed ? (
         <>
-          {me ? (
-            <p className="muted">
-              Signed in as <strong>{me.username}</strong>
-              {me.role ? ` (${me.role})` : ""}
-            </p>
-          ) : null}
-          <div className="row">
-            <button onClick={loadRoms}>Refresh</button>
-            <button onClick={logout}>Logout</button>
-          </div>
-          <UploadPanel onUploaded={loadRoms} />
+          <SessionBar me={me} onRefresh={loadRoms} onLogout={logout} />
+          {canWrite ? <UploadPanel onUploaded={loadRoms} /> : null}
           <RomList
             romPage={romPage}
             query={query}
             platforms={platforms}
             onQuery={setQuery}
-            onScrape={async (id) => { await api.scrapeCover(id); await loadRoms(); }}
+            onScrape={canWrite ? async (id) => { await api.scrapeCover(id); await loadRoms(); } : null}
             onDownload={downloadRom}
           />
         </>
