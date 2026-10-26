@@ -1,4 +1,8 @@
+import atexit
 import os
+import shutil
+import sys
+import tempfile
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -79,6 +83,15 @@ USE_TZ = True
 STATIC_URL = "static/"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+# `manage.py test` runs against in-memory SQLite and a throwaway media dir so the
+# suite needs no running PostgreSQL and never writes into the real MEDIA_ROOT.
+TESTING = len(sys.argv) > 1 and sys.argv[1] == "test"
+if TESTING:
+    DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}}
+    MEDIA_ROOT = Path(tempfile.mkdtemp(prefix="birdroms-test-media-"))
+    atexit.register(shutil.rmtree, MEDIA_ROOT, ignore_errors=True)
+    PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
