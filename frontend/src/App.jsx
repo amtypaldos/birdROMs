@@ -61,7 +61,7 @@ function UploadPanel({ onUploaded }) {
   );
 }
 
-function RomList({ roms, onScrape }) {
+function RomList({ roms, onScrape, onDownload }) {
   return (
     <section className="card">
       <h2>ROM Library</h2>
@@ -72,9 +72,7 @@ function RomList({ roms, onScrape }) {
               <strong>{rom.title}</strong> - {rom.platform} ({rom.extension})
             </div>
             <div className="row">
-              <a href={rom.file} target="_blank" rel="noreferrer">
-                Download
-              </a>
+              <button onClick={() => onDownload(rom)}>Download</button>
               <button onClick={() => onScrape(rom.id)}>Scrape Cover</button>
             </div>
             {rom.cover_art_url ? <img src={rom.cover_art_url} alt={rom.title} className="cover" /> : null}
@@ -106,6 +104,15 @@ export default function App() {
     }
   }, [authed]);
 
+  async function downloadRom(rom) {
+    try {
+      await api.downloadRom(rom);
+      setError("");
+    } catch (err) {
+      setError(String(err.message || err));
+    }
+  }
+
   function logout() {
     setToken(null);
     setAuthed(false);
@@ -124,7 +131,11 @@ export default function App() {
             <button onClick={logout}>Logout</button>
           </div>
           <UploadPanel onUploaded={loadRoms} />
-          <RomList roms={roms} onScrape={async (id) => { await api.scrapeCover(id); await loadRoms(); }} />
+          <RomList
+            roms={roms}
+            onScrape={async (id) => { await api.scrapeCover(id); await loadRoms(); }}
+            onDownload={downloadRom}
+          />
         </>
       ) : null}
     </main>

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 vi.mock("./api/client", () => ({
   getToken: vi.fn(() => null),
@@ -8,12 +8,13 @@ vi.mock("./api/client", () => ({
     login: vi.fn(),
     listRoms: vi.fn(() => Promise.resolve([])),
     createRom: vi.fn(),
-    scrapeCover: vi.fn()
+    scrapeCover: vi.fn(),
+    downloadRom: vi.fn(() => Promise.resolve())
   }
 }));
 
 import App from "./App";
-import { api } from "./api/client";
+import { api, getToken } from "./api/client";
 
 describe("App", () => {
   it("renders the login form when there is no token", () => {
@@ -25,5 +26,17 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "Login" })).toBeInTheDocument();
     expect(screen.queryByText("ROM Library")).not.toBeInTheDocument();
     expect(api.listRoms).not.toHaveBeenCalled();
+  });
+
+  it("downloads through the authenticated API instead of linking to media", async () => {
+    const rom = { id: 3, title: "Zelda", platform: "NES", extension: ".nes", download_url: "/api/roms/3/download/" };
+    getToken.mockReturnValueOnce("abc123");
+    api.listRoms.mockResolvedValueOnce([rom]);
+
+    const { container } = render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Download" }));
+
+    expect(api.downloadRom).toHaveBeenCalledWith(rom);
+    expect(container.querySelector("a[href]")).toBeNull();
   });
 });

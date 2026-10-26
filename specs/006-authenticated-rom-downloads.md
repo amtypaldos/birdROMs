@@ -1,6 +1,6 @@
 # 006 — Authenticated ROM downloads
 
-## Status: DRAFT
+## Status: COMPLETE
 Priority: 6
 
 ## Problem / Context
@@ -24,14 +24,14 @@ permission-checked endpoint that works with either storage backend (spec 005).
 
 ## Completion Signal
 Implementation:
-- [ ] `download` endpoint with permission + 404 + attachment header, storage-aware.
-- [ ] Public media route removed/guarded for non-DEBUG.
-- [ ] Frontend downloads via the authenticated endpoint with the token.
+- [x] `download` endpoint with permission + 404 + attachment header, storage-aware.
+- [x] Public media route removed/guarded for non-DEBUG.
+- [x] Frontend downloads via the authenticated endpoint with the token.
 
 Testing:
-- [ ] Backend tests: super_admin & readonly can download; anon denied; unknown id → 404.
-- [ ] `uv run python manage.py test` passes; `yarn test`/`yarn build` pass.
+- [x] Backend tests: super_admin & readonly can download; anon denied; unknown id → 404.
+- [x] `uv run python manage.py test` passes; `yarn test`/`yarn build` pass.
 
 Commit and push. Output `<promise>DONE</promise>` only when all boxes are verified.
 
-<!-- NR_OF_TRIES: 0 -->
+<!-- NR_OF_TRIES: 1 -->

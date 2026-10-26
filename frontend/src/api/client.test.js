@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, getToken, setToken } from "./client";
+import { api, filenameFromDisposition, getToken, setToken } from "./client";
 
 function mockLocalStorage() {
   const store = new Map();
@@ -61,5 +61,38 @@ describe("api client", () => {
 
     const [, options] = fetchMock.mock.calls[0];
     expect(options.headers.Authorization).toBeUndefined();
+  });
+
+  it("downloads ROMs through the authenticated endpoint as a blob", async () => {
+    const blob = new Blob(["NES"]);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "Content-Disposition": 'attachment; filename="Zelda.nes"' }),
+      blob: () => Promise.resolve(blob)
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const createObjectURL = vi.fn(() => "blob:rom");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    setToken("abc123");
+
+    await api.downloadRom({ id: 7, title: "Zelda", extension: ".nes" });
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/roms/7/download/");
+    expect(options.headers.Authorization).toBe("Token abc123");
+    expect(createObjectURL).toHaveBeenCalledWith(blob);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(click.mock.contexts[0].download).toBe("Zelda.nes");
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:rom");
+    click.mockRestore();
+  });
+
+  it("parses Content-Disposition filenames", () => {
+    expect(filenameFromDisposition('attachment; filename="Zelda.nes"')).toBe("Zelda.nes");
+    expect(filenameFromDisposition("attachment; filename*=UTF-8''Pok%C3%A9mon.gb")).toBe("Pokémon.gb");
+    expect(filenameFromDisposition(null)).toBeNull();
   });
 });
