@@ -10,6 +10,10 @@ value (database, secret key, allowed hosts, auth and storage settings) is config
 through environment variables documented in `backend/.env.example` — no secrets live in
 this repository. Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
+**Recommended: deploy with Docker. [SELF_HOSTING.md](SELF_HOSTING.md)** is the step-by-step
+guide. It covers configuration, HTTPS, SSO (Pocket ID), S3/MinIO or NFS storage, the first
+`super_admin`, and backups.
+
 ## Core Features
 
 - Upload and manage ROM files in a shared library
@@ -35,20 +39,46 @@ this repository. Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.m
 
 ## Quick Start
 
-### 1) Backend setup (uv)
+### Production (Docker, recommended)
+
+```bash
+cp backend/.env.example backend/.env    # set DJANGO_SECRET_KEY, DJANGO_DEBUG=False, hosts, DB password
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml exec backend python manage.py createsuperuser
+```
+
+birdROMs is then on `http://<host>:8080`. The stack is PostgreSQL, gunicorn, and nginx serving
+the UI and proxying the API. Read [SELF_HOSTING.md](SELF_HOSTING.md) before exposing it.
+
+### Development (Docker)
+
+You only need Docker:
+
+```bash
+docker compose up --build
+```
+
+This starts PostgreSQL, the Django dev server at <http://localhost:8000> and the Vite dev
+server at <http://localhost:5173>, with hot reload from `./backend` and `./frontend/src`.
+`backend/.env` is optional here. Create an admin with
+`docker compose exec backend python manage.py createsuperuser`. If port 5432 is already taken,
+use `BIRDROMS_DB_PORT=15432 docker compose up`.
+
+### Development (without Docker)
+
+Backend (uv). Run `docker compose up -d postgres` for a database, or point `POSTGRES_*` at
+your own:
 
 ```bash
 cd backend
-uv venv
-source .venv/bin/activate
 uv sync
 cp .env.example .env
-python manage.py migrate
-python manage.py createsuperuser
-python manage.py runserver
+uv run python manage.py migrate
+uv run python manage.py createsuperuser
+uv run python manage.py runserver
 ```
 
-### 2) Frontend setup (yarn)
+Frontend (Yarn, via `corepack enable`):
 
 ```bash
 cd frontend
@@ -56,9 +86,8 @@ yarn install
 yarn dev
 ```
 
-Frontend expects backend API at `http://localhost:8000/api`.
-
-If Yarn is not already available, run `corepack enable` once.
+The Vite dev server proxies `/api` to `http://localhost:8000` (override with
+`VITE_PROXY_TARGET`).
 
 ## Testing
 

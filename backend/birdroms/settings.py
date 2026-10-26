@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from apps.roms.cover_art import parse_cover_art_settings
 
 from .auth_config import parse_allow_local_login, parse_auth_methods, parse_oidc_settings
+from .deploy_config import check_secret_key, parse_csv, parse_proxy_settings
 from .storage import build_storages
 from .uploads import parse_max_upload_bytes
 
@@ -19,7 +20,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "unsafe-dev-secret-key")
 DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() == "true"
-ALLOWED_HOSTS = [h.strip() for h in os.getenv("DJANGO_ALLOWED_HOSTS", "localhost").split(",")]
+ALLOWED_HOSTS = parse_csv(os.environ, "DJANGO_ALLOWED_HOSTS") or ["localhost"]
+
+# Reverse-proxy / HTTPS settings (CSRF_TRUSTED_ORIGINS, SECURE_PROXY_SSL_HEADER, secure
+# cookies); see birdroms/deploy_config.py and .env.example.
+_proxy = parse_proxy_settings(os.environ)
+CSRF_TRUSTED_ORIGINS = _proxy["CSRF_TRUSTED_ORIGINS"]
+SECURE_PROXY_SSL_HEADER = _proxy["SECURE_PROXY_SSL_HEADER"]
+SESSION_COOKIE_SECURE = _proxy["SESSION_COOKIE_SECURE"]
+CSRF_COOKIE_SECURE = _proxy["CSRF_COOKIE_SECURE"]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -36,6 +45,8 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # Serves collected static files (Django admin) in production; ROM media is never static.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -87,6 +98,8 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+# `collectstatic` target, served by WhiteNoise. The Docker image sets /app/staticfiles.
+STATIC_ROOT = Path(os.getenv("STATIC_ROOT", BASE_DIR / "staticfiles"))
 MEDIA_URL = "/media/"
 MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", BASE_DIR / "media"))
 
@@ -121,6 +134,9 @@ if TESTING:
     OIDC = parse_oidc_settings({}, AUTH_METHODS)
     # No live provider calls from tests; scraping tests opt in with mocked HTTP.
     COVER_ART = parse_cover_art_settings({"COVER_ART_PROVIDERS": ""})
+
+if not TESTING:
+    check_secret_key(SECRET_KEY, DEBUG)
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

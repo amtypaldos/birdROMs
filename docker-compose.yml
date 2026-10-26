@@ -1,4 +1,15 @@
-version: "3.9"
+# birdROMs development stack: PostgreSQL + Django (runserver) + Vite (hot reload).
+#
+#   docker compose up --build
+#
+# Then open http://localhost:5173 (API at http://localhost:8000/api). Backend code reloads
+# from ./backend; frontend src/, index.html and vite.config.js reload from ./frontend.
+# After changing dependencies (pyproject.toml/uv.lock or package.json/yarn.lock), rebuild
+# with `docker compose up --build`.
+#
+# backend/.env is optional here and loaded if present (copy backend/.env.example to start).
+# The database and debug settings below always win, so the stack works with zero config.
+# For production use docker-compose.prod.yml — see SELF_HOSTING.md.
 
 services:
   postgres:
@@ -8,9 +19,57 @@ services:
       POSTGRES_USER: birdroms
       POSTGRES_PASSWORD: birdroms
     ports:
-      - "5432:5432"
+      # Published so a backend running directly on the host (uv run) can use it too.
+      # Set BIRDROMS_DB_PORT if 5432 is taken by a local PostgreSQL.
+      - "${BIRDROMS_DB_PORT:-5432}:5432"
     volumes:
       - birdroms_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U birdroms -d birdroms"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      target: dev
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      DJANGO_DEBUG: "True"
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,backend
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: birdroms
+      POSTGRES_USER: birdroms
+      POSTGRES_PASSWORD: birdroms
+      MEDIA_ROOT: /data/media
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - birdroms_dev_media:/data/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    environment:
+      VITE_PROXY_TARGET: http://backend:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.js:/app/vite.config.js
+    depends_on:
+      - backend
 
 volumes:
   birdroms_pgdata:
+  birdroms_dev_media:

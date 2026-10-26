@@ -19,6 +19,8 @@ build/
 *.egg
 # Local media uploads (ROMs, cover art)
 media/
+# collectstatic output (Django admin assets)
+staticfiles/
 
 # --- Node / Vite (frontend) ---
 node_modules/
