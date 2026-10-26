@@ -1,3 +1,4 @@
 - 2026-10-26 — 001 backend-test-harness: SQLite/temp-media test settings + accounts & ROM API tests (12 tests), README Testing section.
 - 2026-10-26 — 002 frontend-tooling: ESLint 9 flat config (react + hooks), Vitest 2 + RTL + jsdom, client.js and App.jsx tests (4), README frontend testing section.
 - 2026-10-26 — 003 foss-licensing-and-hygiene: MIT LICENSE, README self-hosting + License sections, CONTRIBUTING.md, .gitignore gaps filled, documented .env.example (backend/.env already untracked).
+- 2026-10-26 — 004 expanded-platform-support: 50-extension canonical map (Nintendo/Sega/Sony/Atari/others + generic Disc Image/Archive), suffix-based case-insensitive classifier, SUPPORTED_EXTENSIONS/SUPPORTED_PLATFORMS constants, README platform table, 8 new tests (20 total).

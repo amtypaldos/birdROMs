@@ -9,6 +9,13 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from .models import ROM
+from .services import (
+    EXTENSION_TO_PLATFORM,
+    SUPPORTED_EXTENSIONS,
+    SUPPORTED_PLATFORMS,
+    UNKNOWN_PLATFORM,
+    classify_platform_from_extension,
+)
 
 
 def make_user(username, group_name=None):
@@ -93,3 +100,107 @@ class ScrapeCoverTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         rom.refresh_from_db()
         self.assertEqual(rom.cover_art_url, "")
+
+
+class PlatformClassificationTests(SimpleTestCase):
+    def test_classifies_representative_sample_across_systems(self):
+        cases = {
+            "Super Mario Bros.nes": "NES",
+            "Chrono Trigger.sfc": "SNES",
+            "Earthbound.smc": "SNES",
+            "Super Mario 64.z64": "Nintendo 64",
+            "Zelda OoT.v64": "Nintendo 64",
+            "Wind Waker.rvz": "Nintendo GameCube",
+            "Melee.gcm": "Nintendo GameCube",
+            "Mario Kart Wii.wbfs": "Nintendo Wii",
+            "Tetris.gb": "Game Boy",
+            "Pokemon Crystal.gbc": "Game Boy Color",
+            "Metroid Fusion.gba": "Game Boy Advance",
+            "Mario Kart DS.nds": "Nintendo DS",
+            "Ocarina 3D.3ds": "Nintendo 3DS",
+            "Eshop Title.cia": "Nintendo 3DS",
+            "Alex Kidd.sms": "Sega Master System",
+            "Sonic.gen": "Sega Genesis",
+            "Sonic 2.md": "Sega Genesis",
+            "Streets of Rage.smd": "Sega Genesis",
+            "Shinobi.gg": "Sega Game Gear",
+            "Knuckles Chaotix.32x": "Sega 32X",
+            "Shenmue.gdi": "Sega Dreamcast",
+            "Jet Set Radio.cdi": "Sega Dreamcast",
+            "FF7.pbp": "Sony PlayStation",
+            "Patapon.cso": "Sony PSP",
+            "Bonk.pce": "PC Engine / TurboGrafx-16",
+            "SNK vs Capcom.ngp": "Neo Geo Pocket",
+            "Metal Slug.ngc": "Neo Geo Pocket Color",
+            "Gunpey.ws": "WonderSwan",
+            "Final Fantasy.wsc": "WonderSwan Color",
+            "Pitfall.a26": "Atari 2600",
+            "Ninja Golf.a78": "Atari 7800",
+            "California Games.lnx": "Atari Lynx",
+            "Tempest 2000.j64": "Atari Jaguar",
+            "Alien vs Predator.jag": "Atari Jaguar",
+        }
+        for filename, platform in cases.items():
+            with self.subTest(filename=filename):
+                self.assertEqual(classify_platform_from_extension(filename), platform)
+
+    def test_ambiguous_extensions_map_to_generic_labels(self):
+        for filename in ("game.iso", "game.bin", "game.cue", "game.chd"):
+            with self.subTest(filename=filename):
+                self.assertEqual(classify_platform_from_extension(filename), "Disc Image")
+        for filename in ("game.zip", "game.7z"):
+            with self.subTest(filename=filename):
+                self.assertEqual(classify_platform_from_extension(filename), "Archive")
+
+    def test_case_insensitive_and_multi_dot_filenames(self):
+        self.assertEqual(classify_platform_from_extension("Super.Mario.World.SFC"), "SNES")
+        self.assertEqual(classify_platform_from_extension("roms/v1.0.final.Gba"), "Game Boy Advance")
+        # The last suffix wins, not a substring match (".smd" must not be read as ".md").
+        self.assertEqual(classify_platform_from_extension("game.md.smd"), "Sega Genesis")
+        self.assertEqual(classify_platform_from_extension("game.nes.zip"), "Archive")
+
+    def test_unknown_or_missing_extension(self):
+        self.assertEqual(classify_platform_from_extension("readme.txt"), UNKNOWN_PLATFORM)
+        self.assertEqual(classify_platform_from_extension("noextension"), UNKNOWN_PLATFORM)
+        self.assertEqual(classify_platform_from_extension(".nes"), UNKNOWN_PLATFORM)
+
+    def test_supported_constants_derived_from_map(self):
+        self.assertEqual(SUPPORTED_EXTENSIONS, frozenset(EXTENSION_TO_PLATFORM))
+        self.assertIn("SNES", SUPPORTED_PLATFORMS)
+        self.assertIn("Disc Image", SUPPORTED_PLATFORMS)
+        self.assertEqual(list(SUPPORTED_PLATFORMS), sorted(set(EXTENSION_TO_PLATFORM.values())))
+        for ext in SUPPORTED_EXTENSIONS:
+            self.assertTrue(ext.startswith(".") and ext == ext.lower(), ext)
+
+
+class PlatformOverrideTests(APITestCase):
+    def setUp(self):
+        self.admin_user = make_user("admin", "super_admin")
+        self.client.force_authenticate(self.admin_user)
+
+    def test_blank_platform_is_auto_classified(self):
+        response = self.client.post(
+            reverse("rom-list"), {"title": "Shenmue", "file": dummy_rom("Shenmue.chd")}, format="multipart"
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["platform"], "Disc Image")
+        self.assertEqual(response.data["extension"], ".chd")
+
+    def test_explicit_platform_overrides_ambiguous_extension(self):
+        response = self.client.post(
+            reverse("rom-list"),
+            {"title": "Panzer Dragoon", "platform": "Sega Saturn", "file": dummy_rom("Panzer Dragoon.chd")},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(ROM.objects.get(pk=response.data["id"]).platform, "Sega Saturn")
+
+    def test_platform_can_be_corrected_after_upload(self):
+        rom = ROM.objects.create(title="FF7", file=dummy_rom("ff7.bin"), uploaded_by=self.admin_user)
+        self.assertEqual(rom.platform, "Disc Image")
+
+        response = self.client.patch(reverse("rom-detail", args=[rom.pk]), {"platform": "Sony PlayStation"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        rom.refresh_from_db()
+        self.assertEqual(rom.platform, "Sony PlayStation")
