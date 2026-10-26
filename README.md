@@ -2,6 +2,14 @@
 
 `birdROMs` is a Django + React web app for private retro ROM sharing and management with role-based access, extension-based ROM classification, and cover art scraping support.
 
+## Self-hosting / Open source
+
+birdROMs is free and open-source software. There is no central service: anyone can run
+their own private instance for themselves and a trusted group. Every deployment-specific
+value (database, secret key, allowed hosts, and future auth/storage settings) is configured
+through environment variables documented in `backend/.env.example` — no secrets live in
+this repository. Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Core Features
 
 - Upload and manage ROM files in a shared library
@@ -87,11 +95,9 @@ ROM classification is determined server-side from file extension. Unknown extens
 
 `POST /api/roms/{id}/scrape-cover/` attempts to fetch cover art metadata based on ROM title/platform. The initial implementation provides a service hook and safe fallback, ready for integration with providers such as IGDB, ScreenScraper, or custom scrapers.
 
-## Important Note About Git Init
+## License
 
-If your environment blocks `.git` writes, run this manually from the project root:
+birdROMs is released under the [MIT License](LICENSE).
 
-```bash
-cd birdROMs
-git init
-```
+birdROMs does not ship or distribute any ROMs. You are responsible for ensuring that any
+files you upload to your instance are ones you have the right to use and share.
