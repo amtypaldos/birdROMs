@@ -19,7 +19,8 @@ vi.mock("./api/client", () => ({
     listPlatforms: vi.fn(() => Promise.resolve([])),
     createRom: vi.fn(),
     scrapeCover: vi.fn(),
-    downloadRom: vi.fn(() => Promise.resolve())
+    downloadRom: vi.fn(() => Promise.resolve()),
+    coverObjectUrl: vi.fn(() => Promise.resolve("blob:cover"))
   }
 }));
 
@@ -48,6 +49,25 @@ describe("App", () => {
 
     expect(api.downloadRom).toHaveBeenCalledWith(rom);
     expect(container.querySelector("a[href]")).toBeNull();
+  });
+
+  it("loads stored cover art with the token and skips ROMs without art", async () => {
+    const withArt = { id: 3, title: "Zelda", platform: "NES", extension: ".nes", cover_art_url: "/api/roms/3/cover/" };
+    const without = { id: 4, title: "Metroid", platform: "NES", extension: ".nes", cover_art_url: null };
+    getToken.mockReturnValueOnce("abc123");
+    api.listRoms.mockResolvedValueOnce(page([withArt, without]));
+    const revokeObjectURL = vi.fn(); // jsdom has no object URLs
+    vi.stubGlobal("URL", { revokeObjectURL });
+
+    const { unmount } = render(<App />);
+
+    expect(await screen.findByRole("img", { name: "Zelda" })).toHaveAttribute("src", "blob:cover");
+    expect(screen.queryByRole("img", { name: "Metroid" })).not.toBeInTheDocument();
+    expect(api.coverObjectUrl).toHaveBeenCalledTimes(1);
+    expect(api.coverObjectUrl).toHaveBeenCalledWith(withArt);
+    unmount();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:cover");
+    vi.unstubAllGlobals();
   });
 
   it("shows only the SSO button when only OIDC is enabled", async () => {

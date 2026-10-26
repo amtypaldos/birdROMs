@@ -9,7 +9,8 @@ class ROM(models.Model):
     platform = models.CharField(max_length=120, blank=True)
     file = models.FileField(upload_to="roms/")
     extension = models.CharField(max_length=20, blank=True)
-    cover_art_url = models.URLField(blank=True)
+    # Scraped cover image, stored in the configured storage (served via /api/roms/{id}/cover/).
+    cover_art = models.FileField(upload_to="covers/", blank=True)
     cover_art_source = models.CharField(max_length=120, blank=True)
     uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="roms")
     uploaded_at = models.DateTimeField(auto_now_add=True)

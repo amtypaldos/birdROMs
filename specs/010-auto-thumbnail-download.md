@@ -1,6 +1,6 @@
 # 010 — Auto-download cover art / thumbnails
 
-## Status: DRAFT
+## Status: COMPLETE
 Priority: 10
 
 ## Problem / Context
@@ -28,15 +28,15 @@ image should be stored in the configured storage backend (spec 005) so it works 
 
 ## Completion Signal
 Implementation:
-- [ ] libretro + ScreenScraper providers with configurable order + timeouts.
-- [ ] Art stored in configured storage; source recorded.
-- [ ] Auto-scrape on upload (non-fatal on failure) + backfill command.
+- [x] libretro + ScreenScraper providers with configurable order + timeouts.
+- [x] Art stored in configured storage; source recorded.
+- [x] Auto-scrape on upload (non-fatal on failure) + backfill command.
 
 Testing:
-- [ ] Backend tests (mocked HTTP): a match sets cover art; no-match leaves it empty; a provider
+- [x] Backend tests (mocked HTTP): a match sets cover art; no-match leaves it empty; a provider
       error does not break the upload.
-- [ ] `uv run python manage.py test` passes.
+- [x] `uv run python manage.py test` passes.
 
 Commit and push. Output `<promise>DONE</promise>` only when all boxes are verified.
 
-<!-- NR_OF_TRIES: 0 -->
+<!-- NR_OF_TRIES: 1 -->

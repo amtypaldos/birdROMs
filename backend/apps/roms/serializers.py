@@ -12,6 +12,8 @@ class ROMSerializer(serializers.ModelSerializer):
     # The stored file is upload-only; clients download via the authenticated endpoint.
     file = serializers.FileField(write_only=True)
     download_url = serializers.SerializerMethodField()
+    # Authenticated endpoint for the stored cover image, or null when there is none.
+    cover_art_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ROM
@@ -46,7 +48,13 @@ class ROMSerializer(serializers.ModelSerializer):
             )
         return file
 
-    def get_download_url(self, obj):
-        path = reverse("rom-download", args=[obj.pk])
+    def _api_url(self, name, obj):
+        path = reverse(name, args=[obj.pk])
         request = self.context.get("request")
         return request.build_absolute_uri(path) if request else path
+
+    def get_download_url(self, obj):
+        return self._api_url("rom-download", obj)
+
+    def get_cover_art_url(self, obj):
+        return self._api_url("rom-cover", obj) if obj.cover_art else None

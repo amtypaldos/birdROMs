@@ -7,6 +7,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from apps.roms.cover_art import parse_cover_art_settings
+
 from .auth_config import parse_allow_local_login, parse_auth_methods, parse_oidc_settings
 from .storage import build_storages
 from .uploads import parse_max_upload_bytes
@@ -94,6 +96,10 @@ STORAGES = build_storages(os.environ)
 # Largest accepted ROM upload, in bytes (default 2 GiB); see birdroms/uploads.py.
 MAX_ROM_UPLOAD_BYTES = parse_max_upload_bytes(os.environ)
 
+# Cover-art providers (in order), request timeout and ScreenScraper credentials;
+# see apps/roms/cover_art.py and .env.example.
+COVER_ART = parse_cover_art_settings(os.environ)
+
 # Enabled login methods (`local`, `oidc`); see birdroms/auth_config.py and .env.example.
 AUTH_METHODS = parse_auth_methods(os.environ)
 # Local username/password login is always on when this is true (defaults to DEBUG).
@@ -113,6 +119,8 @@ if TESTING:
     AUTH_METHODS = parse_auth_methods({})
     ALLOW_LOCAL_LOGIN = False
     OIDC = parse_oidc_settings({}, AUTH_METHODS)
+    # No live provider calls from tests; scraping tests opt in with mocked HTTP.
+    COVER_ART = parse_cover_art_settings({"COVER_ART_PROVIDERS": ""})
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

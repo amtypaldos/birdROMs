@@ -1,6 +1,8 @@
 from pathlib import PurePosixPath
 
-from django.http import FileResponse
+import mimetypes
+
+from django.http import FileResponse, Http404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -9,7 +11,7 @@ from .models import ROM
 from .pagination import ROMPagination
 from .permissions import IsSuperAdminOrReadOnlyRole
 from .serializers import ROMSerializer
-from .services import scrape_cover_art
+from .cover_art import fetch_cover_for_rom, safe_fetch_cover_for_rom
 
 
 def download_filename(rom):
@@ -43,7 +45,9 @@ class ROMViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        serializer.save(uploaded_by=self.request.user)
+        rom = serializer.save(uploaded_by=self.request.user)
+        # The upload has already succeeded; a scrape failure is logged, never surfaced.
+        safe_fetch_cover_for_rom(rom)
 
     @action(detail=False, methods=["get"])
     def platforms(self, request):
@@ -54,14 +58,20 @@ class ROMViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def scrape_cover(self, request, pk=None):
+        # Manual (re-)scrape: replaces any existing cover art.
         rom = self.get_object()
-        result = scrape_cover_art(rom.title, rom.platform)
-        if result.image_url:
-            rom.cover_art_url = result.image_url
-            rom.cover_art_source = result.source or "unknown"
-            rom.save(update_fields=["cover_art_url", "cover_art_source"])
-            return Response(ROMSerializer(rom).data, status=status.HTTP_200_OK)
+        if fetch_cover_for_rom(rom):
+            return Response(self.get_serializer(rom).data, status=status.HTTP_200_OK)
         return Response({"detail": "No cover art found."}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=["get"])
+    def cover(self, request, pk=None):
+        # Cover art lives next to the ROMs in private storage, so it is served the same way.
+        rom = self.get_object()
+        if not rom.cover_art:
+            raise Http404("This ROM has no cover art.")
+        content_type = mimetypes.guess_type(rom.cover_art.name)[0] or "application/octet-stream"
+        return FileResponse(rom.cover_art.open("rb"), content_type=content_type)
 
     @action(detail=True, methods=["get"])
     def download(self, request, pk=None):

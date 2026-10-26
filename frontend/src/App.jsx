@@ -142,6 +142,30 @@ function Pagination({ romPage, page, onPage }) {
   );
 }
 
+function CoverImage({ rom }) {
+  const [src, setSrc] = useState(null);
+
+  useEffect(() => {
+    if (!rom.cover_art_url) return undefined;
+    let objectUrl = null;
+    let cancelled = false;
+    api.coverObjectUrl(rom).then(
+      (url) => {
+        if (cancelled) URL.revokeObjectURL(url);
+        else setSrc((objectUrl = url));
+      },
+      () => {}
+    );
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      setSrc(null);
+    };
+  }, [rom]);
+
+  return src ? <img src={src} alt={rom.title} className="cover" /> : null;
+}
+
 function RomList({ romPage, query, platforms, onQuery, onScrape, onDownload }) {
   return (
     <section className="card">
@@ -158,7 +182,7 @@ function RomList({ romPage, query, platforms, onQuery, onScrape, onDownload }) {
               <button onClick={() => onDownload(rom)}>Download</button>
               <button onClick={() => onScrape(rom.id)}>Scrape Cover</button>
             </div>
-            {rom.cover_art_url ? <img src={rom.cover_art_url} alt={rom.title} className="cover" /> : null}
+            <CoverImage rom={rom} />
           </div>
         ))}
         <Pagination romPage={romPage} page={query.page} onPage={(page) => onQuery({ ...query, page })} />

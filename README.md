@@ -17,7 +17,7 @@ this repository. Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.m
   - `super_admin`: full upload/manage access
   - `readonly`: browse metadata and download ROMs
 - ROM platform classification from file extension (`.nes`, `.sfc`, `.gba`, etc.)
-- Cover art scraping endpoint and metadata storage
+- Automatic cover art download on upload (libretro-thumbnails, ScreenScraper), stored with the ROMs
 - PostgreSQL as the primary database
 - REST API backend (Django REST Framework) + React frontend
 
@@ -250,7 +250,28 @@ and saves the response as a blob.
 
 ## Cover Art Scraping
 
-`POST /api/roms/{id}/scrape-cover/` attempts to fetch cover art metadata based on ROM title/platform. The initial implementation provides a service hook and safe fallback, ready for integration with providers such as IGDB, ScreenScraper, or custom scrapers.
+When a ROM is uploaded, birdROMs looks up cover art right away and saves the image to the
+configured storage (filesystem or S3, under `covers/`). It is a real stored file, not a link to
+the provider, so the library keeps working offline. `cover_art_source` records which provider
+supplied the image.
+
+Providers are tried in the order set by `COVER_ART_PROVIDERS` until one returns an image:
+
+| Provider | Credentials | How it matches |
+| --- | --- | --- |
+| `libretro` | none | Maps the platform to a [libretro-thumbnails](https://thumbnails.libretro.com/) system and tries the ROM title, then the uploaded file name (No-Intro names such as `Super Mario World (USA)` match best). It looks for boxart first, then the title screen, then a snapshot. |
+| `screenscraper` | `SS_DEV_ID`, `SS_DEV_PASSWORD` (+ optional `SS_USER`, `SS_PASSWORD`) | Queries [ScreenScraper](https://www.screenscraper.fr/) by file name and system and picks the 2D box art (then title screen or screenshot). It is skipped when no developer credentials are set. |
+
+Every HTTP call uses the `COVER_ART_TIMEOUT` (seconds, default 10). Only image responses up to
+10 MB are accepted. Scraping never fails an upload: provider errors are logged and the ROM is
+saved without art. Set `COVER_ART_PROVIDERS=` (empty) to turn scraping off.
+
+- `POST /api/roms/{id}/scrape_cover/` (super_admin) re-scrapes and replaces the art. It returns
+  404 when nothing matched.
+- `GET /api/roms/{id}/cover/` serves the stored image. It is permission-checked like downloads,
+  and the ROM's `cover_art_url` points at it (`null` when there is no art).
+- `uv run python manage.py backfill_cover_art` fetches art for existing ROMs that have none.
+  Add `--force` to re-scrape every ROM.
 
 ## License
 
