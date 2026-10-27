@@ -1,10 +1,13 @@
+from html import escape
 from io import StringIO
 from pathlib import Path
 from unittest import mock
+from urllib.parse import quote
 
 import requests
 
 from django.conf import settings
+from django.core.cache import cache
 from django.contrib.auth.models import Group, User
 from django.core.files.base import ContentFile
 from django.core.files.storage import FileSystemStorage, StorageHandler, default_storage
@@ -21,7 +24,14 @@ from birdroms.storage import FILESYSTEM_STORAGE, S3_STORAGE, build_storages
 from birdroms.tasks import scrape_rom_cover
 from birdroms.uploads import parse_max_upload_bytes
 
-from .cover_art import find_libretro, find_screenscraper, parse_cover_art_settings
+from .cover_art import (
+    best_libretro_name,
+    find_libretro,
+    find_screenscraper,
+    libretro_name_index,
+    normalize_title,
+    parse_cover_art_settings,
+)
 from .models import ROM
 from .services import (
     EXTENSION_TO_PLATFORM,
@@ -178,9 +188,107 @@ class CoverArtSettingsTests(SimpleTestCase):
                 parse_cover_art_settings({"COVER_ART_TIMEOUT": bad})
 
 
+NES_INDEX_URL = "https://thumbnails.libretro.com/Nintendo%20-%20Nintendo%20Entertainment%20System/Named_Boxarts/"
+NES_NAMES = [
+    "Super Mario Bros. (World)",
+    "Super Mario Bros. 3 (USA) (Rev 1)",
+    "Super Mario Bros. 3 (Europe)",
+    "Metroid (USA)",
+    "Legend of Zelda, The (USA)",
+    "Mario & Luigi_ Superstar Saga",
+]
+
+
+def index_listing(names):
+    """An Apache-style directory listing like thumbnails.libretro.com serves."""
+    rows = "".join(f'<tr><td><a href="{quote(name)}.png">{escape(name)}.png</a></td></tr>' for name in names)
+    return FakeResponse(content=f"<html><body><table>{rows}</table></body></html>".encode(), content_type="text/html")
+
+
+class NormalizeTitleTests(SimpleTestCase):
+    def test_normalize_title_strips_tags(self):
+        self.assertEqual(normalize_title("Super Mario Bros. (USA) (Rev 1)"), "super mario bros")
+        self.assertEqual(normalize_title("Metroid [!] (Europe) [b1]"), "metroid")
+
+    def test_normalize_title_drops_punctuation_and_collapses_whitespace(self):
+        self.assertEqual(normalize_title("  Mario & Luigi:   Superstar-Saga! "), "mario luigi superstar saga")
+        self.assertEqual(normalize_title("Mario & Luigi_ Superstar Saga"), "mario luigi superstar saga")
+        # No-Intro files articles at the end: "Legend of Zelda, The".
+        self.assertEqual(normalize_title("Legend of Zelda, The (USA)"), "the legend of zelda")
+
+
+class BestLibretroNameTests(SimpleTestCase):
+    def test_best_match_picks_closest(self):
+        self.assertEqual(best_libretro_name("super mario bros 3", "NES", NES_NAMES), "Super Mario Bros. 3 (USA) (Rev 1)")
+        self.assertEqual(best_libretro_name("Mario and Luigi Superstar Saga", "GBA", NES_NAMES), "Mario & Luigi_ Superstar Saga")
+        self.assertEqual(best_libretro_name("The Legend of Zelda", "NES", NES_NAMES), "Legend of Zelda, The (USA)")
+
+    def test_best_match_rejects_false_positive(self):
+        self.assertIsNone(best_libretro_name("Sonic the Hedgehog", "NES", NES_NAMES))
+        self.assertIsNone(best_libretro_name("Obscure Homebrew", "NES", NES_NAMES))
+        self.assertIsNone(best_libretro_name("Metroid", "NES", []))
+
+    def test_sequels_are_not_confused_with_the_original(self):
+        index = ["Sonic the Hedgehog (USA)", "Sonic the Hedgehog 2 (USA)", "Final Fantasy IV (USA)"]
+        self.assertEqual(best_libretro_name("Sonic the Hedgehog 2", "x", index), "Sonic the Hedgehog 2 (USA)")
+        self.assertEqual(best_libretro_name("Sonic the Hedgehog", "x", index), "Sonic the Hedgehog (USA)")
+        self.assertIsNone(best_libretro_name("Sonic the Hedgehog 3", "x", index))
+        self.assertIsNone(best_libretro_name("Final Fantasy VI", "x", index))
+
+    def test_prefers_exact_then_usa_among_equal_matches(self):
+        index = ["Metroid (Europe)", "Metroid (Japan)", "Metroid (USA)"]
+        self.assertEqual(best_libretro_name("Metroid", "NES", index), "Metroid (USA)")
+        self.assertEqual(best_libretro_name("Metroid (Japan)", "NES", index), "Metroid (Japan)")
+
+
+class LibretroNameIndexTests(SimpleTestCase):
+    def setUp(self):
+        cache.clear()
+        self.addCleanup(cache.clear)
+
+    def test_parses_listing_and_caches_it(self):
+        get = fake_http({NES_INDEX_URL: index_listing(NES_NAMES)})
+        with mock.patch("apps.roms.cover_art.requests.get", get):
+            first = libretro_name_index("Nintendo - Nintendo Entertainment System")
+            second = libretro_name_index("Nintendo - Nintendo Entertainment System")
+
+        self.assertEqual(first, NES_NAMES)
+        self.assertEqual(second, NES_NAMES)
+        get.assert_called_once()
+
+    def test_missing_listing_is_empty_and_not_cached(self):
+        with mock.patch("apps.roms.cover_art.requests.get", fake_http({})) as get:
+            self.assertEqual(libretro_name_index("Nintendo - Nintendo Entertainment System"), [])
+            self.assertEqual(libretro_name_index("Nintendo - Nintendo Entertainment System"), [])
+        self.assertEqual(get.call_count, 2)
+
+
 class ProviderTests(SimpleTestCase):
+    def setUp(self):
+        cache.clear()
+        self.addCleanup(cache.clear)
+
+    def test_libretro_uses_matched_index_name(self):
+        get = fake_http({NES_INDEX_URL: index_listing(NES_NAMES)})
+        with mock.patch("apps.roms.cover_art.requests.get", get):
+            urls = find_libretro("super mario bros 3", "NES", "roms/smb3.nes", LIBRETRO_ONLY)
+        base = "https://thumbnails.libretro.com/Nintendo%20-%20Nintendo%20Entertainment%20System/"
+        self.assertEqual(urls[0], f"{base}Named_Boxarts/Super%20Mario%20Bros.%203%20%28USA%29%20%28Rev%201%29.png")
+        # The unmatched file-stem candidate ("smb3") is still tried as a plain guess after it.
+        self.assertEqual(urls[1], f"{base}Named_Boxarts/smb3.png")
+        self.assertEqual(urls[2], f"{base}Named_Titles/Super%20Mario%20Bros.%203%20%28USA%29%20%28Rev%201%29.png")
+        self.assertTrue(urls[-1].startswith(f"{base}Named_Snaps/"))
+
+    def test_libretro_guesses_exact_name_when_nothing_matches(self):
+        get = fake_http({NES_INDEX_URL: index_listing(NES_NAMES)})
+        with mock.patch("apps.roms.cover_art.requests.get", get):
+            urls = find_libretro("Obscure Homebrew", "NES", "", LIBRETRO_ONLY)
+        self.assertEqual(len(urls), 3)
+        self.assertTrue(urls[0].endswith("/Named_Boxarts/Obscure%20Homebrew.png"))
+
     def test_libretro_urls_map_platform_and_sanitize_title(self):
-        urls = find_libretro("Mario & Luigi: Superstar Saga", "Game Boy Advance", "roms/mlss.gba", LIBRETRO_ONLY)
+        with mock.patch("apps.roms.cover_art.requests.get", fake_http({})):
+            urls = find_libretro("Mario & Luigi: Superstar Saga", "Game Boy Advance", "roms/mlss.gba", LIBRETRO_ONLY)
         self.assertEqual(
             urls[0],
             "https://thumbnails.libretro.com/Nintendo%20-%20Game%20Boy%20Advance/Named_Boxarts/"
@@ -256,6 +364,23 @@ class CoverArtScrapeTests(APITestCase):
         self.assertEqual(cover.status_code, status.HTTP_200_OK)
         self.assertEqual(cover["Content-Type"], "image/png")
         self.assertEqual(b"".join(cover.streaming_content), PNG_BYTES)
+
+    def test_upload_fuzzy_matches_loose_title_via_index(self):
+        cache.clear()
+        self.addCleanup(cache.clear)
+        # Routes match in order, and the image URL contains the index URL, so list the image first.
+        get = fake_http(
+            {
+                f"{NES_INDEX_URL}Metroid%20%28USA%29.png": FakeResponse(content=PNG_BYTES),
+                NES_INDEX_URL: index_listing(["Metroid (USA)", "Super Metroid (USA)"]),
+            }
+        )
+        with mock.patch("apps.roms.cover_art.requests.get", get):
+            self.upload(title="metroid", name="metroid_fan_rip.nes")
+
+        rom = ROM.objects.get()
+        self.assertEqual(rom.cover_art_source, "libretro")
+        self.assertTrue(rom.cover_art)
 
     def test_upload_falls_back_to_title_screen(self):
         titles = self.boxart.replace("Named_Boxarts", "Named_Titles")
