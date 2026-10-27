@@ -120,11 +120,11 @@ ALLOW_LOCAL_LOGIN = parse_allow_local_login(os.environ, DEBUG)
 # Single OIDC/SSO provider (Pocket ID, Authentik, Keycloak, Authelia, Google, ...).
 OIDC = parse_oidc_settings(os.environ, AUTH_METHODS)
 
-# `manage.py test` runs against in-memory SQLite and a throwaway media dir so the
-# suite needs no running PostgreSQL and never writes into the real MEDIA_ROOT.
+# `manage.py test` runs on the same PostgreSQL config as above (Django creates a
+# `test_<POSTGRES_DB>` database) and uses a throwaway media dir so it never writes
+# into the real MEDIA_ROOT.
 TESTING = len(sys.argv) > 1 and sys.argv[1] == "test"
 if TESTING:
-    DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}}
     MEDIA_ROOT = Path(tempfile.mkdtemp(prefix="birdroms-test-media-"))
     STORAGES = build_storages({})
     atexit.register(shutil.rmtree, MEDIA_ROOT, ignore_errors=True)
