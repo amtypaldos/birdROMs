@@ -100,11 +100,23 @@ class ROMPermissionTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual([rom["title"] for rom in response.data["results"]], ["Existing"])
 
-    def test_readonly_cannot_create(self):
+    def test_any_authed_user_can_upload(self):
+        # Open uploads are deliberate for now (RBAC deferred): a roleless user can upload.
+        nobody = make_user("nobody")
+        self.client.force_authenticate(nobody)
+
+        response = self.client.post(self.list_url, {"title": "Mine", "file": dummy_rom()}, format="multipart")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(ROM.objects.get(pk=response.data["id"]).uploaded_by, nobody)
+
+    def test_readonly_can_now_create(self):
         self.client.force_authenticate(self.readonly_user)
-        response = self.client.post(self.list_url, {"title": "Nope", "file": dummy_rom()}, format="multipart")
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(ROM.objects.count(), 0)
+
+        response = self.client.post(self.list_url, {"title": "Mine", "file": dummy_rom()}, format="multipart")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(ROM.objects.get(pk=response.data["id"]).uploaded_by, self.readonly_user)
 
     def test_super_admin_can_create_with_auto_classification(self):
         self.client.force_authenticate(self.admin_user)
@@ -1482,12 +1494,15 @@ class MediaAccessControlTests(APITestCase):
             with self.subTest(name=name, who="roleless"):
                 self.assertEqual(self.client.get(reverse(name, args=[self.rom.pk])).status_code, 403)
 
-    def test_readonly_users_cannot_write_or_scrape(self):
+    def test_readonly_users_cannot_modify_delete_or_scrape(self):
+        # Uploading (create) is open to any authenticated user; every other write stays super_admin-only.
         self.client.force_authenticate(make_user("reader", "readonly"))
+        detail = reverse("rom-detail", args=[self.rom.pk])
         self.assertEqual(self.client.post(reverse("rom-scrape-cover", args=[self.rom.pk])).status_code, 403)
-        self.assertEqual(self.client.delete(reverse("rom-detail", args=[self.rom.pk])).status_code, 403)
-        upload = self.client.post(reverse("rom-list"), {"title": "x", "file": dummy_rom("x.nes")}, format="multipart")
-        self.assertEqual(upload.status_code, 403)
+        self.assertEqual(self.client.patch(detail, {"title": "X"}).status_code, 403)
+        self.assertEqual(self.client.delete(detail).status_code, 403)
+        self.rom.refresh_from_db()
+        self.assertEqual(self.rom.title, "Zelda")
 
     def test_cover_is_served_as_an_image_with_nosniff(self):
         self.client.force_authenticate(make_user("reader", "readonly"))
