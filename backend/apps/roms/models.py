@@ -12,6 +12,15 @@ class ROM(models.Model):
     # Scraped cover image, stored in the configured storage (served via /api/roms/{id}/cover/).
     cover_art = models.FileField(upload_to="covers/", blank=True)
     cover_art_source = models.CharField(max_length=120, blank=True)
+    # Game metadata, scraped from ScreenScraper when it is configured (blank/null until then).
+    description = models.TextField(blank=True, default="")
+    genre = models.CharField(max_length=255, blank=True, default="")
+    release_year = models.IntegerField(null=True, blank=True)
+    developer = models.CharField(max_length=255, blank=True, default="")
+    publisher = models.CharField(max_length=255, blank=True, default="")
+    players = models.CharField(max_length=50, blank=True, default="")
+    rating = models.CharField(max_length=20, blank=True, default="")
+    region = models.CharField(max_length=20, blank=True, default="")
     uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="roms")
     uploaded_at = models.DateTimeField(auto_now_add=True)
 

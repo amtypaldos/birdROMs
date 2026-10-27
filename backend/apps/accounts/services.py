@@ -3,6 +3,7 @@ import re
 from django.conf import settings
 from django.contrib.auth.models import Group, User
 from django.db import transaction
+from rest_framework.authtoken.models import Token
 
 from .models import OIDCIdentity
 
@@ -91,7 +92,8 @@ def provision_oidc_user(claims):
 
     Users are matched on the stable `(issuer, sub)` pair. With `OIDC_LINK_BY_EMAIL`, a first
     login may instead attach to an existing user with the same email, but only when the provider
-    marks that email as verified. The role group is re-synced from the claims on every login so
+    marks that email as verified; the account's local password and API token are then revoked,
+    since local sign-up does not prove ownership of the address. The role group is re-synced from the claims on every login so
     that removing someone from `OIDC_ADMIN_GROUP` at the provider takes effect.
     """
     config = settings.OIDC
@@ -108,6 +110,12 @@ def provision_oidc_user(claims):
             matches = list(User.objects.filter(email__iexact=email)[:2])
             if len(matches) == 1 and not hasattr(matches[0], "oidc_identity"):
                 user = matches[0]
+                # Local sign-up never verifies email, so whoever created this account may not own
+                # the address. Take it over: drop any password and API token they hold (the
+                # password change also invalidates their sessions), leaving SSO as the way in.
+                user.set_unusable_password()
+                user.save(update_fields=["password"])
+                Token.objects.filter(user=user).delete()
         if user is None:
             user = User(username=_unique_username(claims), email=email)
             user.set_unusable_password()

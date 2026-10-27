@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// Where the dev server proxies /api and /media. Docker dev sets this to the backend service.
+// Where the dev server proxies /api (ROMs and covers are never served from /media). Docker dev sets this to the backend service.
 const apiProxyTarget = process.env.VITE_PROXY_TARGET || "http://localhost:8000";
 
 export default defineConfig({
@@ -10,10 +10,6 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": {
-        target: apiProxyTarget,
-        changeOrigin: true
-      },
-      "/media": {
         target: apiProxyTarget,
         changeOrigin: true
       }

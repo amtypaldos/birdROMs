@@ -1,13 +1,16 @@
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
+from django.conf import settings
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.core.exceptions import ImproperlyConfigured
 from django.http import HttpResponseRedirect
 from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.authtoken.models import Token
+from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import OIDCIdentity
@@ -17,6 +20,9 @@ from birdroms.auth_config import parse_allow_local_login, parse_auth_methods, pa
 
 class RegisterTests(APITestCase):
     url = reverse("register")
+
+    def setUp(self):
+        cache.clear()  # Throttle counters live in the cache.
 
     def test_register_creates_readonly_user_and_returns_token(self):
         response = self.client.post(
@@ -43,11 +49,47 @@ class RegisterTests(APITestCase):
         self.assertIn("password", response.data)
         self.assertFalse(User.objects.filter(username="bob").exists())
 
+    def test_register_enforces_django_password_validators(self):
+        for password in ("password", "12345678", "alice123"):
+            with self.subTest(password=password):
+                response = self.client.post(
+                    self.url, {"username": "alice", "email": "a@example.com", "password": password}, format="json"
+                )
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, password)
+                self.assertIn("password", response.data)
+        self.assertFalse(User.objects.filter(username="alice").exists())
+
+    def test_register_is_rate_limited_per_client(self):
+        with mock.patch.dict(SimpleRateThrottle.THROTTLE_RATES, {"register": "2/min"}):
+            codes = [
+                self.client.post(
+                    self.url, {"username": f"user{i}", "email": "", "password": "s3cure-pass-xyz"}, format="json"
+                ).status_code
+                for i in range(3)
+            ]
+        self.assertEqual(codes, [201, 201, 429])
+
+    def test_register_throttle_ignores_client_supplied_forwarded_for_entries(self):
+        # One trusted proxy: only the last X-Forwarded-For entry (appended by it) is the client.
+        drf = {**settings.REST_FRAMEWORK, "NUM_PROXIES": 1}
+        with override_settings(REST_FRAMEWORK=drf), mock.patch.dict(SimpleRateThrottle.THROTTLE_RATES, {"register": "2/min"}):
+            codes = [
+                self.client.post(
+                    self.url,
+                    {"username": f"user{i}", "email": "", "password": "s3cure-pass-xyz"},
+                    format="json",
+                    HTTP_X_FORWARDED_FOR=f"10.0.0.{i}, 203.0.113.7",
+                ).status_code
+                for i in range(3)
+            ]
+        self.assertEqual(codes, [201, 201, 429])
+
 
 class LoginTests(APITestCase):
     url = reverse("login")
 
     def setUp(self):
+        cache.clear()
         self.user = User.objects.create_user(username="carol", password="correct-horse")
 
     def test_login_with_valid_credentials_returns_token(self):
@@ -62,6 +104,41 @@ class LoginTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertNotIn("token", response.data)
+
+
+class LoginThrottleTests(APITestCase):
+    url = reverse("login")
+
+    def setUp(self):
+        cache.clear()
+        User.objects.create_user(username="carol", password="correct-horse")
+
+    def attempt(self, username="carol", password="wrong", **extra):
+        return self.client.post(self.url, {"username": username, "password": password}, format="json", **extra)
+
+    def test_repeated_failures_for_one_username_are_throttled(self):
+        with mock.patch.dict(SimpleRateThrottle.THROTTLE_RATES, {"login": "3/min"}):
+            codes = [self.attempt().status_code for _ in range(4)]
+            self.assertEqual(codes, [400, 400, 400, 429])
+            # Even the right password is refused while throttled.
+            self.assertEqual(self.attempt(password="correct-horse").status_code, 429)
+
+    def test_throttle_cannot_be_dodged_by_spoofing_the_client_address(self):
+        with mock.patch.dict(SimpleRateThrottle.THROTTLE_RATES, {"login": "2/min"}):
+            codes = [self.attempt(HTTP_X_FORWARDED_FOR=f"10.0.0.{i}").status_code for i in range(3)]
+        self.assertEqual(codes, [400, 400, 429])
+
+    def test_other_usernames_are_unaffected(self):
+        User.objects.create_user(username="dave", password="another-pass")
+        with mock.patch.dict(SimpleRateThrottle.THROTTLE_RATES, {"login": "1/min"}):
+            self.assertEqual(self.attempt().status_code, 400)
+            self.assertEqual(self.attempt().status_code, 429)
+            self.assertEqual(self.attempt("dave", "another-pass").status_code, 200)
+
+    def test_username_case_does_not_bypass_the_throttle(self):
+        with mock.patch.dict(SimpleRateThrottle.THROTTLE_RATES, {"login": "1/min"}):
+            self.assertEqual(self.attempt("carol").status_code, 400)
+            self.assertEqual(self.attempt("CAROL").status_code, 429)
 
 
 OIDC_TEST_CONFIG = parse_oidc_settings(
@@ -312,6 +389,29 @@ class OIDCFlowTests(APITestCase):
         self.fragment(self.callback(self.claims()))
         self.assertEqual(User.objects.count(), 1)
         self.assertEqual(OIDCIdentity.objects.get().user, local)
+
+    @override_settings(AUTH_METHODS={"local", "oidc"}, OIDC={**OIDC_TEST_CONFIG, "LINK_BY_EMAIL": True})
+    def test_linking_by_email_evicts_a_pre_registered_squatter(self):
+        # Local sign-up does not verify email, so an attacker can pre-register the victim's address
+        # and keep the password and token. Linking must cut both off.
+        attacker = self.client.post(
+            reverse("register"),
+            {"username": "squatter", "email": "grace@example.com", "password": "attacker-pass-1"},
+            format="json",
+        )
+        old_token = attacker.data["token"]
+
+        fragment = self.fragment(self.callback(self.claims()))
+
+        user = User.objects.get(username="squatter")
+        self.assertEqual(OIDCIdentity.objects.get().user, user)
+        self.assertFalse(user.has_usable_password())
+        self.assertFalse(Token.objects.filter(key=old_token).exists())
+        self.assertNotEqual(fragment["oidc_token"][0], old_token)
+        relogin = self.client.post(
+            reverse("login"), {"username": "squatter", "password": "attacker-pass-1"}, format="json"
+        )
+        self.assertEqual(relogin.status_code, status.HTTP_400_BAD_REQUEST)
 
     @override_settings(OIDC={**OIDC_TEST_CONFIG, "LINK_BY_EMAIL": True})
     def test_unverified_email_is_never_linked(self):

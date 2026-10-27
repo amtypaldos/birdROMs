@@ -1,13 +1,20 @@
 # Self-hosting birdROMs with Docker
 
 Docker is the recommended way to run birdROMs. The production stack in
-[`docker-compose.prod.yml`](docker-compose.prod.yml) runs three containers:
+[`docker-compose.prod.yml`](docker-compose.prod.yml) runs five containers:
 
 | Service | Image | Role |
 | --- | --- | --- |
 | `postgres` | `postgres:16` | Database (named volume `birdroms_pgdata`) |
 | `backend` | built from `backend/Dockerfile` (`prod` target) | Django + gunicorn. Runs `migrate` and `collectstatic` on every start. ROMs and cover art live in the named volume `birdroms_media`, or in S3. |
+| `redis` | `redis:7-alpine` | Task queue broker for background jobs (cover-art scraping). Holds no data you need to keep. |
+| `worker` | same image as `backend` | Runs `python manage.py run_huey`: consumes the queue and runs the hourly sweep that re-queues ROMs still missing cover art. Shares the env file and media volume with `backend`. |
 | `web` | built from `frontend/Dockerfile` (`prod` target) | nginx. Serves the built React app and proxies `/api/`, `/admin/` and `/static/` to the backend. This is the only published port. |
+
+Cover art is scraped in the background: an upload returns immediately and the `worker` fetches
+the art shortly after. Without a running `redis` and `worker`, uploads still succeed but covers
+never appear. The compose file sets `REDIS_URL=redis://redis:6379/0` for `backend` and `worker`
+(overriding any value in `backend/.env`); if you run Redis elsewhere, change it in the compose file.
 
 All configuration comes from one env file, `backend/.env`. No secrets are baked into the
 images, and deploying needs no code changes.
@@ -41,6 +48,10 @@ POSTGRES_USER=birdroms
 POSTGRES_PASSWORD=<a long random password>
 ```
 
+If a TLS-terminating proxy sits in front of the `web` container, also set `NUM_PROXIES=2`
+(default `1`: the `web` nginx only). It tells Django how many proxies to trust in
+`X-Forwarded-For`, which the sign-up throttle uses to find the real client address.
+
 `POSTGRES_*` configures both the database container (it creates the database on first start)
 and the backend's connection. `POSTGRES_HOST`, `POSTGRES_PORT` and `MEDIA_ROOT` are fixed by the
 compose file, so you can leave them as they are.
@@ -66,7 +77,7 @@ repo-root `.env` file, which Compose reads automatically:
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.prod.yml ps        # all three should become "healthy"/"running"
+docker compose -f docker-compose.prod.yml ps        # all five should become "healthy"/"running"
 docker compose -f docker-compose.prod.yml logs -f backend
 ```
 
@@ -223,13 +234,18 @@ After deploying or upgrading:
    served.
 6. Sign in as your `super_admin` and upload a small ROM. It should appear in the library, and
    downloading it should give back the identical file.
-7. Restart with `docker compose -f docker-compose.prod.yml restart`. The ROM is still there.
+7. `docker compose -f docker-compose.prod.yml logs worker` shows Huey running, and the uploaded
+   ROM gets cover art within a few seconds (if the title is known to a configured provider).
+8. Restart with `docker compose -f docker-compose.prod.yml restart`. The ROM is still there.
 
 ## Troubleshooting
 
 - **`backend` keeps restarting:** run `docker compose -f docker-compose.prod.yml logs backend`.
   An `ImproperlyConfigured` error names the env variable to fix. Typical causes are a
   placeholder secret key, missing OIDC/S3 values, or a bad boolean.
+- **Covers never appear:** check `docker compose -f docker-compose.prod.yml logs worker` and that
+  `redis` is healthy. Uploads are not affected by a queue outage, and the hourly sweep re-queues
+  any ROM still missing art once the worker is back.
 - **`400 Bad Request`:** the hostname you're using isn't in `DJANGO_ALLOWED_HOSTS`.
 - **`403 CSRF verification failed` on `/admin/`:** add your origin (with scheme) to
   `DJANGO_CSRF_TRUSTED_ORIGINS`. Behind HTTPS, also set `DJANGO_BEHIND_HTTPS_PROXY=True`.
