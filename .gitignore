@@ -32,6 +32,11 @@ coverage/
 
 # --- Ralph runtime output ---
 logs/
+PROMPT_build.md
+PROMPT_plan.md
+
+# --- Internal working docs (not for the public repo) ---
+CLEANUP.md
 
 # --- direnv (holds a personal config-dir path and/or token) ---
 .envrc
