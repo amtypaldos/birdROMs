@@ -42,7 +42,7 @@ from .cover_art import (
     parse_cover_art_settings,
     parse_screenscraper_metadata,
 )
-from .models import ROM
+from .models import ROM, Playlist, PlaylistItem
 from .services import (
     EXTENSION_TO_PLATFORM,
     SUPPORTED_EXTENSIONS,
@@ -1440,3 +1440,122 @@ class HostileInputTests(APITestCase):
         for value in response.headers.values():
             self.assertNotIn("\n", value)
             self.assertNotIn("\r", value)
+
+
+class PlaylistTests(APITestCase):
+    list_url = reverse("playlist-list")
+
+    def setUp(self):
+        self.owner = make_user("owner")
+        self.other = make_user("other")
+        self.rom_a = ROM.objects.create(title="A", file=dummy_rom("a.nes"), uploaded_by=self.owner)
+        self.rom_b = ROM.objects.create(title="B", file=dummy_rom("b.nes"), uploaded_by=self.owner)
+        self.rom_c = ROM.objects.create(title="C", file=dummy_rom("c.nes"), uploaded_by=self.owner)
+
+    def make_playlist(self, *roms):
+        playlist = Playlist.objects.create(name="Road trip", created_by=self.owner)
+        for order, rom in enumerate(roms):
+            PlaylistItem.objects.create(playlist=playlist, rom=rom, order=order)
+        return playlist
+
+    def test_anonymous_cannot_list_or_create(self):
+        self.assertIn(self.client.get(self.list_url).status_code, (401, 403))
+        self.assertIn(self.client.post(self.list_url, {"name": "x"}).status_code, (401, 403))
+
+    def test_any_authed_user_creates_playlist(self):
+        # No role group is needed: playlists are open to every authenticated user.
+        self.client.force_authenticate(self.other)
+
+        response = self.client.post(
+            self.list_url, {"name": "Mine", "rom_ids": [self.rom_b.pk, self.rom_a.pk]}, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        playlist = Playlist.objects.get(pk=response.data["id"])
+        self.assertEqual(playlist.created_by, self.other)
+        self.assertEqual(response.data["created_by"], self.other.pk)
+        self.assertEqual(response.data["created_by_username"], "other")
+        self.assertEqual([rom["id"] for rom in response.data["roms"]], [self.rom_b.pk, self.rom_a.pk])
+
+    def test_create_ignores_client_supplied_owner(self):
+        self.client.force_authenticate(self.other)
+        response = self.client.post(self.list_url, {"name": "Mine", "created_by": self.owner.pk}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Playlist.objects.get().created_by, self.other)
+
+    def test_create_rejects_unknown_and_duplicate_roms(self):
+        self.client.force_authenticate(self.other)
+        unknown = self.client.post(self.list_url, {"name": "x", "rom_ids": [999999]}, format="json")
+        duplicate = self.client.post(self.list_url, {"name": "x", "rom_ids": [self.rom_a.pk, self.rom_a.pk]}, format="json")
+        self.assertEqual(unknown.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(duplicate.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Playlist.objects.count(), 0)
+
+    def test_create_requires_a_name(self):
+        self.client.force_authenticate(self.other)
+        response = self.client.post(self.list_url, {"name": ""}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_list_shows_every_users_playlists(self):
+        self.make_playlist(self.rom_a, self.rom_b)
+        self.client.force_authenticate(self.other)
+
+        response = self.client.get(self.list_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([p["name"] for p in response.data], ["Road trip"])
+        self.assertEqual(response.data[0]["rom_count"], 2)
+
+    def test_playlist_detail_returns_ordered_roms(self):
+        # Insert out of id order so ordering can only come from `order`.
+        playlist = self.make_playlist(self.rom_c, self.rom_a, self.rom_b)
+        self.client.force_authenticate(self.other)
+
+        response = self.client.get(reverse("playlist-detail", args=[playlist.pk]))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([rom["id"] for rom in response.data["roms"]], [self.rom_c.pk, self.rom_a.pk, self.rom_b.pk])
+        self.assertIn("download_url", response.data["roms"][0])
+
+    def test_non_owner_cannot_edit_others_playlist(self):
+        playlist = self.make_playlist(self.rom_a)
+        url = reverse("playlist-detail", args=[playlist.pk])
+        self.client.force_authenticate(self.other)
+
+        self.assertEqual(self.client.patch(url, {"name": "Hijacked"}, format="json").status_code, 403)
+        self.assertEqual(self.client.put(url, {"name": "Hijacked"}, format="json").status_code, 403)
+        self.assertEqual(self.client.delete(url).status_code, 403)
+
+        playlist.refresh_from_db()
+        self.assertEqual(playlist.name, "Road trip")
+        self.assertEqual(playlist.items.count(), 1)
+
+    def test_owner_can_rename_reorder_and_delete(self):
+        playlist = self.make_playlist(self.rom_a, self.rom_b)
+        url = reverse("playlist-detail", args=[playlist.pk])
+        self.client.force_authenticate(self.owner)
+
+        response = self.client.patch(
+            url, {"name": "Renamed", "rom_ids": [self.rom_c.pk, self.rom_b.pk]}, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["name"], "Renamed")
+        self.assertEqual([rom["id"] for rom in response.data["roms"]], [self.rom_c.pk, self.rom_b.pk])
+
+        # A rename alone leaves the items untouched.
+        response = self.client.patch(url, {"name": "Again"}, format="json")
+        self.assertEqual([rom["id"] for rom in response.data["roms"]], [self.rom_c.pk, self.rom_b.pk])
+
+        self.assertEqual(self.client.delete(url).status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Playlist.objects.exists())
+        self.assertEqual(ROM.objects.count(), 3)
+
+    def test_deleting_a_rom_drops_it_from_playlists(self):
+        playlist = self.make_playlist(self.rom_a, self.rom_b)
+        self.rom_a.delete()
+        self.client.force_authenticate(self.owner)
+
+        response = self.client.get(reverse("playlist-detail", args=[playlist.pk]))
+
+        self.assertEqual([rom["id"] for rom in response.data["roms"]], [self.rom_b.pk])
