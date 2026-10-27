@@ -121,6 +121,16 @@ export const api = {
     const response = await rawRequest(`/roms/${rom.id}/cover/`);
     return URL.createObjectURL(await response.blob());
   },
+  // Cheap existence probe used while waiting for async scraping: 404 (or any failure) means
+  // "no art yet", so the caller just tries again later.
+  async coverExists(romId) {
+    try {
+      await rawRequest(`/roms/${romId}/cover/`, { method: "HEAD" });
+      return true;
+    } catch {
+      return false;
+    }
+  },
   // ROMs are private: fetch through the authenticated endpoint, then save the blob locally.
   async downloadRom(rom) {
     const response = await rawRequest(`/roms/${rom.id}/download/`);

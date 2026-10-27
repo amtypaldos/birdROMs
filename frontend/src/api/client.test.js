@@ -127,6 +127,23 @@ describe("api client", () => {
     expect(url).toBe("blob:cover");
   });
 
+  it("checks cover existence with an authenticated HEAD request, false on 404", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 404, text: () => Promise.resolve("") })
+      .mockResolvedValueOnce({ ok: true, status: 200 });
+    vi.stubGlobal("fetch", fetchMock);
+    setToken("abc123");
+
+    expect(await api.coverExists(7)).toBe(false);
+    expect(await api.coverExists(7)).toBe(true);
+
+    const [path, options] = fetchMock.mock.calls[0];
+    expect(path).toBe("/api/roms/7/cover/");
+    expect(options.method).toBe("HEAD");
+    expect(options.headers.Authorization).toBe("Token abc123");
+  });
+
   it("parses Content-Disposition filenames", () => {
     expect(filenameFromDisposition('attachment; filename="Zelda.nes"')).toBe("Zelda.nes");
     expect(filenameFromDisposition("attachment; filename*=UTF-8''Pok%C3%A9mon.gb")).toBe("Pokémon.gb");

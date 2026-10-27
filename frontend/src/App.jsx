@@ -329,26 +329,54 @@ function Pagination({ romPage, page, onPage }) {
   );
 }
 
+// Scraping is async, so a fresh ROM has no art for a moment. Cards without a cover poll for it,
+// but only this many times, this far apart (~1 minute) so a ROM that never gets art stops asking.
+export const COVER_POLL_INTERVAL_MS = 3000;
+export const COVER_POLL_MAX_ATTEMPTS = 20;
+
 function CoverImage({ rom }) {
   const [src, setSrc] = useState(null);
+  const { id, cover_art_url: coverArtUrl } = rom;
 
   useEffect(() => {
-    if (!rom.cover_art_url) return undefined;
     let objectUrl = null;
     let cancelled = false;
-    api.coverObjectUrl(rom).then(
-      (url) => {
-        if (cancelled) URL.revokeObjectURL(url);
-        else setSrc((objectUrl = url));
-      },
-      () => {}
-    );
+    let timer = null;
+    let attempts = 0;
+
+    function load() {
+      api.coverObjectUrl({ id }).then(
+        (url) => {
+          if (cancelled) URL.revokeObjectURL(url);
+          else setSrc((objectUrl = url));
+        },
+        () => {}
+      );
+    }
+
+    async function poll() {
+      attempts += 1;
+      let found = false;
+      try {
+        found = await api.coverExists(id);
+      } catch {
+        // treat a failed check like "not yet" and try again
+      }
+      if (cancelled) return;
+      if (found) load();
+      else if (attempts < COVER_POLL_MAX_ATTEMPTS) timer = setTimeout(poll, COVER_POLL_INTERVAL_MS);
+    }
+
+    if (coverArtUrl) load();
+    else timer = setTimeout(poll, COVER_POLL_INTERVAL_MS);
+
     return () => {
       cancelled = true;
+      clearTimeout(timer);
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       setSrc(null);
     };
-  }, [rom]);
+  }, [id, coverArtUrl]);
 
   return (
     <div className="cover-frame">

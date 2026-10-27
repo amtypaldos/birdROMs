@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 function page(results, { count = results.length, next = null, previous = null } = {}) {
   return { count, next, previous, results };
@@ -20,11 +20,12 @@ vi.mock("./api/client", () => ({
     createRom: vi.fn(),
     scrapeCover: vi.fn(),
     downloadRom: vi.fn(() => Promise.resolve()),
-    coverObjectUrl: vi.fn(() => Promise.resolve("blob:cover"))
+    coverObjectUrl: vi.fn(() => Promise.resolve("blob:cover")),
+    coverExists: vi.fn(() => Promise.resolve(false))
   }
 }));
 
-import App, { platformFamily } from "./App";
+import App, { COVER_POLL_INTERVAL_MS, COVER_POLL_MAX_ATTEMPTS, platformFamily } from "./App";
 import { api, consumeOidcFragment, getToken, setToken } from "./api/client";
 
 describe("App", () => {
@@ -64,7 +65,7 @@ describe("App", () => {
     expect(await screen.findByRole("img", { name: "Zelda" })).toHaveAttribute("src", "blob:cover");
     expect(screen.queryByRole("img", { name: "Metroid" })).not.toBeInTheDocument();
     expect(api.coverObjectUrl).toHaveBeenCalledTimes(1);
-    expect(api.coverObjectUrl).toHaveBeenCalledWith(withArt);
+    expect(api.coverObjectUrl).toHaveBeenCalledWith(expect.objectContaining({ id: 3 }));
     unmount();
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:cover");
     vi.unstubAllGlobals();
@@ -404,5 +405,96 @@ describe("global drag-and-drop upload", () => {
     for (const [type, handler] of added) {
       expect(remove).toHaveBeenCalledWith(type, handler);
     }
+  });
+});
+
+describe("cover polling", () => {
+  const fresh = { id: 9, title: "Fresh", platform: "NES", extension: ".nes", cover_art_url: null };
+
+  async function advance(ms) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  }
+
+  async function renderFresh() {
+    getToken.mockReturnValue("tok");
+    api.me.mockResolvedValue({ id: 1, username: "alice", email: "", role: "readonly" });
+    api.listRoms.mockResolvedValue(page([fresh]));
+    api.coverObjectUrl.mockResolvedValue("blob:cover");
+    vi.stubGlobal("URL", { revokeObjectURL: vi.fn() }); // jsdom has no object URLs
+    const view = render(<App />);
+    await advance(0); // let auth + the first list load settle
+    return view;
+  }
+
+  afterEach(() => {
+    cleanup(); // unmount while URL is still stubbed
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("test_card_polls_then_shows_cover", async () => {
+    vi.useFakeTimers();
+    api.coverExists.mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true);
+    await renderFresh();
+
+    expect(screen.queryByRole("img", { name: "Fresh" })).not.toBeInTheDocument();
+    expect(api.coverExists).not.toHaveBeenCalled();
+
+    await advance(COVER_POLL_INTERVAL_MS);
+    expect(api.coverExists).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("img", { name: "Fresh" })).not.toBeInTheDocument();
+
+    await advance(COVER_POLL_INTERVAL_MS);
+    expect(api.coverExists).toHaveBeenCalledTimes(2);
+
+    await advance(COVER_POLL_INTERVAL_MS);
+    expect(api.coverExists).toHaveBeenCalledTimes(3);
+    expect(api.coverObjectUrl).toHaveBeenCalledWith(expect.objectContaining({ id: 9 }));
+    expect(screen.getByRole("img", { name: "Fresh" })).toHaveAttribute("src", "blob:cover");
+
+    // Art arrived: polling has stopped for good.
+    await advance(COVER_POLL_INTERVAL_MS * (COVER_POLL_MAX_ATTEMPTS + 5));
+    expect(api.coverExists).toHaveBeenCalledTimes(3);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("test_poll_gives_up_after_limit", async () => {
+    vi.useFakeTimers();
+    api.coverExists.mockResolvedValue(false);
+    await renderFresh();
+
+    await advance(COVER_POLL_INTERVAL_MS * (COVER_POLL_MAX_ATTEMPTS + 20));
+
+    expect(api.coverExists).toHaveBeenCalledTimes(COVER_POLL_MAX_ATTEMPTS);
+    expect(api.coverObjectUrl).not.toHaveBeenCalled();
+    expect(screen.queryByRole("img", { name: "Fresh" })).not.toBeInTheDocument();
+    expect(document.querySelector(".cover-placeholder")).toBeInTheDocument();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps polling through transient check errors", async () => {
+    vi.useFakeTimers();
+    api.coverExists.mockRejectedValueOnce(new Error("boom")).mockResolvedValue(true);
+    await renderFresh();
+
+    await advance(COVER_POLL_INTERVAL_MS * 2);
+
+    expect(screen.getByRole("img", { name: "Fresh" })).toBeInTheDocument();
+  });
+
+  it("stops polling when the card unmounts", async () => {
+    vi.useFakeTimers();
+    api.coverExists.mockResolvedValue(false);
+    const { unmount } = await renderFresh();
+    await advance(COVER_POLL_INTERVAL_MS);
+    expect(api.coverExists).toHaveBeenCalledTimes(1);
+
+    unmount();
+    await advance(COVER_POLL_INTERVAL_MS * COVER_POLL_MAX_ATTEMPTS);
+
+    expect(api.coverExists).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
