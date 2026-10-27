@@ -13,7 +13,7 @@ from birdroms.tasks import scrape_rom_cover
 from .models import ROM, Playlist
 from .pagination import ROMPagination
 from .permissions import IsPlaylistOwnerOrReadOnly, IsSuperAdminOrReadOnlyRole
-from .serializers import PlaylistSerializer, ROMSerializer
+from .serializers import DeviceROMSerializer, PlaylistSerializer, ROMSerializer
 from .cover_art import scrape_rom
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,12 @@ class ROMViewSet(viewsets.ModelViewSet):
     serializer_class = ROMSerializer
     permission_classes = [IsSuperAdminOrReadOnlyRole]
     pagination_class = ROMPagination
+
+    def get_serializer_class(self):
+        # `?fields=device` swaps the list for the compact handheld shape (same filters and paging).
+        if self.action == "list" and self.request.query_params.get("fields") == "device":
+            return DeviceROMSerializer
+        return super().get_serializer_class()
 
     def get_queryset(self):
         queryset = super().get_queryset()
