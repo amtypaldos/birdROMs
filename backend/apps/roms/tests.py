@@ -37,6 +37,7 @@ from .cover_art import (
     find_libretro,
     find_screenscraper,
     libretro_name_index,
+    lookup_screenscraper_game,
     normalize_title,
     parse_cover_art_settings,
     parse_screenscraper_metadata,
@@ -268,6 +269,14 @@ class LibretroNameIndexTests(SimpleTestCase):
         self.assertEqual(second, NES_NAMES)
         get.assert_called_once()
 
+    def test_redirect_is_refused_and_not_followed(self):
+        redirect = FakeResponse(status_code=302, content_type="text/html", headers={"Location": "http://169.254.169.254/"})
+        get = fake_http({NES_INDEX_URL: redirect})
+        with mock.patch("apps.roms.cover_art.requests.get", get):
+            self.assertEqual(libretro_name_index("Nintendo - Nintendo Entertainment System"), [])
+        get.assert_called_once()
+        self.assertIs(get.call_args.kwargs["allow_redirects"], False)
+
     def test_missing_listing_is_empty_and_not_cached(self):
         with mock.patch("apps.roms.cover_art.requests.get", fake_http({})) as get:
             self.assertEqual(libretro_name_index("Nintendo - Nintendo Entertainment System"), [])
@@ -445,6 +454,24 @@ class ScreenScraperMetadataTests(APITestCase):
         self.assertEqual(self.rom.release_year, 1987)
         ss_calls = [c for c in get.call_args_list if "screenscraper.fr" in c.args[0]]
         self.assertEqual(len(ss_calls), 1)
+
+    def test_lookup_refuses_redirects(self):
+        redirect = FakeResponse(status_code=302, content_type="text/html", headers={"Location": "http://localhost/internal"})
+        get = fake_http({"screenscraper.fr": redirect})
+        with mock.patch("apps.roms.cover_art.requests.get", get):
+            with self.assertRaises(ValueError):
+                lookup_screenscraper_game("Metroid", "NES", "metroid.nes", BOTH_PROVIDERS)
+        get.assert_called_once()
+        self.assertIs(get.call_args.kwargs["allow_redirects"], False)
+
+    def test_redirecting_lookup_degrades_gracefully(self):
+        redirect = FakeResponse(status_code=302, content_type="text/html")
+        with mock.patch("apps.roms.cover_art.requests.get", fake_http({"screenscraper.fr": redirect})), self.assertLogs(
+            "apps.roms.cover_art", "WARNING"
+        ):
+            self.assertFalse(fetch_cover_for_rom(self.rom))
+        self.rom.refresh_from_db()
+        self.assertFalse(self.rom.cover_art)
 
     def test_metadata_saved_even_without_cover_image(self):
         jeu = {key: value for key, value in SS_JEU.items() if key != "medias"}
@@ -646,6 +673,27 @@ class CoverArtScrapeTests(APITestCase):
         if first != rom.cover_art.name:
             self.assertFalse(default_storage.exists(first))
 
+    def test_scrape_cover_returns_200_when_only_metadata_is_found(self):
+        rom = ROM.objects.create(title="Metroid", file=dummy_rom("metroid.nes"), uploaded_by=self.admin_user)
+        jeu = {key: value for key, value in SS_JEU.items() if key != "medias"}
+        get = fake_http(
+            {"screenscraper.fr": FakeResponse(json_data={"response": {"jeu": jeu}}, content_type="application/json")}
+        )
+        with mock.patch("apps.roms.cover_art.requests.get", get), override_settings(COVER_ART=BOTH_PROVIDERS):
+            response = self.client.post(reverse("rom-scrape-cover", args=[rom.pk]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        rom.refresh_from_db()
+        self.assertFalse(rom.cover_art)
+        self.assertEqual(rom.publisher, "Nintendo")
+
+    def test_scrape_cover_never_500s_on_unexpected_error(self):
+        rom = ROM.objects.create(title="Metroid", file=dummy_rom("metroid.nes"), uploaded_by=self.admin_user)
+        with mock.patch("apps.roms.views.scrape_rom", side_effect=RuntimeError("boom")), self.assertLogs(
+            "apps.roms.views", "ERROR"
+        ):
+            response = self.client.post(reverse("rom-scrape-cover", args=[rom.pk]))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
     def test_scrape_cover_returns_404_when_no_image_found(self):
         rom = ROM.objects.create(title="Metroid", file=dummy_rom("metroid.nes"), uploaded_by=self.admin_user)
         with mock.patch("apps.roms.cover_art.requests.get", fake_http({})):
@@ -682,6 +730,15 @@ class ScrapeCoverTaskTests(APITestCase):
             response = self.client.post(self.list_url, {"title": "Metroid", "file": dummy_rom()}, format="multipart")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         scrape.assert_called_once_with(ROM.objects.get().pk)
+
+    def test_upload_succeeds_when_enqueue_fails(self):
+        self.client.force_authenticate(self.admin_user)
+        with mock.patch("apps.roms.views.scrape_rom_cover", side_effect=ConnectionError("redis down")), self.assertLogs(
+            "apps.roms.views", "ERROR"
+        ):
+            response = self.client.post(self.list_url, {"title": "Metroid", "file": dummy_rom()}, format="multipart")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(ROM.objects.count(), 1)
 
     def test_scrape_task_missing_rom_is_noop(self):
         with mock.patch("birdroms.tasks.safe_fetch_cover_for_rom") as fetch:
@@ -1207,6 +1264,21 @@ class ROMAdminTests(TestCase):
         self.assertEqual({call.args[0] for call in scrape.call_args_list}, {first.pk, second.pk})
         self.assertEqual(scrape.call_count, 2)
         self.assertContains(response, "Queued cover art scraping for 2 ROMs.")
+
+
+    def test_admin_rescrape_action_survives_enqueue_failure(self):
+        rom = self.make_rom("Metroid", "metroid.nes")
+        with mock.patch("apps.roms.admin.scrape_rom_cover", side_effect=ConnectionError("redis down")), self.assertLogs(
+            "apps.roms.admin", "ERROR"
+        ):
+            response = self.client.post(
+                self.changelist_url,
+                {"action": "rescrape_cover_art", "_selected_action": [rom.pk]},
+                follow=True,
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Could not queue cover art scraping for 1 ROM")
+        self.assertContains(response, "Queued cover art scraping for 0 ROMs.")
 
 
 class ImageUrlAllowlistTests(SimpleTestCase):

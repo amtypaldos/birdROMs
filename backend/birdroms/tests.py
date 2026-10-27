@@ -1,11 +1,13 @@
 import datetime
+import os
+from unittest import mock
 
 from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase
 
 from huey import MemoryHuey, RedisHuey
 
-from birdroms.deploy_config import check_secret_key, parse_csv, parse_debug, parse_proxy_settings
+from birdroms.deploy_config import check_secret_key, parse_csv, parse_debug, parse_num_proxies, parse_proxy_settings
 from birdroms.huey_config import build_huey, parse_sweep_crontab
 
 
@@ -32,6 +34,36 @@ class ParseDebugTests(SimpleTestCase):
     def test_debug_can_be_enabled_for_development(self):
         self.assertTrue(parse_debug({"DJANGO_DEBUG": "True"}))
         self.assertTrue(parse_debug({"DJANGO_DEBUG": " true "}))
+
+
+    def test_only_the_literal_true_enables_debug(self):
+        for value in ("1", "yes", "on"):
+            with self.subTest(value=value):
+                self.assertFalse(parse_debug({"DJANGO_DEBUG": value}))
+
+    def test_secret_key_error_names_the_exact_debug_value(self):
+        with self.assertRaisesMessage(ImproperlyConfigured, "exactly 'True'"):
+            check_secret_key("change-me", debug=False)
+
+
+class ParseNumProxiesTests(SimpleTestCase):
+    def test_defaults_to_one_proxy(self):
+        self.assertEqual(parse_num_proxies({}), 1)
+        self.assertEqual(parse_num_proxies({"NUM_PROXIES": "  "}), 1)
+
+    def test_reads_the_configured_count(self):
+        self.assertEqual(parse_num_proxies({"NUM_PROXIES": "2"}), 2)
+        self.assertEqual(parse_num_proxies({"NUM_PROXIES": "0"}), 0)
+
+    def test_rejects_invalid_values(self):
+        for value in ("-1", "two", "1.5"):
+            with self.subTest(value=value), self.assertRaises(ImproperlyConfigured):
+                parse_num_proxies({"NUM_PROXIES": value})
+
+    def test_settings_wire_it_into_drf(self):
+        from django.conf import settings
+
+        self.assertEqual(settings.REST_FRAMEWORK["NUM_PROXIES"], parse_num_proxies(os.environ))
 
 
 class ParseCsvTests(SimpleTestCase):
@@ -130,3 +162,32 @@ class HueyWrapperTests(SimpleTestCase):
             return a + b
 
         self.assertEqual(add(2, 3)(), 5)
+
+    def test_seam_exposes_db_task_decorators(self):
+        from huey.contrib import djhuey
+
+        from birdroms import tasks
+
+        self.assertIs(tasks.db_task, djhuey.db_task)
+        self.assertIs(tasks.db_periodic_task, djhuey.db_periodic_task)
+
+    def test_db_task_runs_inline_in_immediate_mode(self):
+        from birdroms.tasks import db_task
+
+        @db_task()
+        def add_with_db(a, b):
+            return a + b
+
+        self.assertEqual(add_with_db(2, 3)(), 5)
+
+    def test_cover_art_tasks_close_stale_connections_on_a_worker(self):
+        from birdroms import tasks
+
+        # A real worker is not in immediate mode; simulate that for the wrapped function only.
+        for task in (tasks.scrape_rom_cover, tasks.sweep_missing_cover_art):
+            with self.subTest(task=task.task_class.__name__):
+                with mock.patch.object(type(tasks.huey), "immediate", new_callable=mock.PropertyMock, return_value=False), \
+                        mock.patch("huey.contrib.djhuey.close_old_connections") as close:
+                    with mock.patch("birdroms.tasks.ROM.objects"), mock.patch("birdroms.tasks.roms_missing_cover_art"):
+                        task.func(*([1] if task is tasks.scrape_rom_cover else []))
+                self.assertEqual(close.call_count, 2)

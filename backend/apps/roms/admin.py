@@ -1,10 +1,14 @@
-from django.contrib import admin
+import logging
+
+from django.contrib import admin, messages
 from django.urls import reverse
 from django.utils.html import format_html
 
 from birdroms.tasks import scrape_rom_cover
 
 from .models import ROM
+
+logger = logging.getLogger(__name__)
 
 
 @admin.register(ROM)
@@ -30,8 +34,20 @@ class ROMAdmin(admin.ModelAdmin):
 
     @admin.action(description="Re-scrape cover art for selected ROMs")
     def rescrape_cover_art(self, request, queryset):
-        queued = 0
+        queued = failed = 0
         for rom_id in queryset.values_list("pk", flat=True):
-            scrape_rom_cover(rom_id)
-            queued += 1
+            try:
+                scrape_rom_cover(rom_id)
+            except Exception:
+                # A broker outage must not turn the admin action into a 500.
+                logger.exception("Could not enqueue the cover art scrape for ROM %s", rom_id)
+                failed += 1
+            else:
+                queued += 1
         self.message_user(request, f"Queued cover art scraping for {queued} ROM{'' if queued == 1 else 's'}.")
+        if failed:
+            self.message_user(
+                request,
+                f"Could not queue cover art scraping for {failed} ROM{'' if failed == 1 else 's'}; see the server log.",
+                level=messages.ERROR,
+            )

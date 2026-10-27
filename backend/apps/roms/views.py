@@ -1,3 +1,4 @@
+import logging
 import mimetypes
 import re
 from pathlib import PurePosixPath
@@ -13,8 +14,9 @@ from .models import ROM
 from .pagination import ROMPagination
 from .permissions import IsSuperAdminOrReadOnlyRole
 from .serializers import ROMSerializer
-from .cover_art import fetch_cover_for_rom
+from .cover_art import scrape_rom
 
+logger = logging.getLogger(__name__)
 
 # Control characters (CR/LF in particular) must never reach a response header.
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
@@ -53,8 +55,11 @@ class ROMViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         rom = serializer.save(uploaded_by=self.request.user)
         # The upload has already succeeded; the scrape runs in the background and a failure
-        # there is logged, never surfaced.
-        scrape_rom_cover(rom.id)
+        # there (including an unreachable queue broker) is logged, never surfaced.
+        try:
+            scrape_rom_cover(rom.id)
+        except Exception:
+            logger.exception("Could not enqueue the cover art scrape for ROM %s", rom.id)
 
     @action(detail=False, methods=["get"])
     def platforms(self, request):
@@ -65,9 +70,15 @@ class ROMViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def scrape_cover(self, request, pk=None):
-        # Manual (re-)scrape: replaces any existing cover art.
+        # Manual (re-)scrape: replaces any existing cover art. 200 when anything was saved (cover
+        # or metadata), 404 only when nothing was found. Never a 500: provider errors are logged.
         rom = self.get_object()
-        if fetch_cover_for_rom(rom):
+        try:
+            saved = any(scrape_rom(rom))
+        except Exception:
+            logger.exception("Manual cover art scrape failed for ROM %s", rom.pk)
+            saved = False
+        if saved:
             return Response(self.get_serializer(rom).data, status=status.HTTP_200_OK)
         return Response({"detail": "No cover art found."}, status=status.HTTP_404_NOT_FOUND)
 

@@ -1,12 +1,38 @@
-# birdROMs production stack: PostgreSQL + Django (gunicorn) + nginx (SPA + reverse proxy).
+# birdROMs production stack: PostgreSQL + Redis + Django (gunicorn) + Huey worker + nginx
+# (SPA + reverse proxy).
 #
 #   cp backend/.env.example backend/.env   # then edit it — see SELF_HOSTING.md
 #   docker compose -f docker-compose.prod.yml up -d --build
 #
-# All configuration comes from backend/.env (shared by the postgres and backend services;
+# All configuration comes from backend/.env (shared by the postgres, backend and worker services;
 # set BIRDROMS_ENV_FILE to use a file elsewhere); nothing is baked into the images. Only the web service is published, on
 # ${BIRDROMS_HTTP_PORT:-8080}; put your TLS-terminating proxy (Caddy, Traefik, nginx, ...)
 # in front of it, or publish it directly on a trusted network.
+
+# Settings shared by the backend and the worker: the same image, env file, topology and media
+# volume (the worker writes the cover art it scrapes).
+x-backend-common: &backend-common
+  build:
+    context: ./backend
+    target: prod
+  image: ${BIRDROMS_BACKEND_IMAGE:-birdroms-backend:latest}
+  restart: unless-stopped
+  env_file:
+    - path: ${BIRDROMS_ENV_FILE:-./backend/.env}
+      required: false
+  environment:
+    # Fixed by this compose file's topology; everything else comes from backend/.env.
+    # Debug is pinned off so a stray DJANGO_DEBUG=True copied from .env.example cannot reach prod.
+    DJANGO_DEBUG: "False"
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    MEDIA_ROOT: /data/media
+    # Background tasks (cover-art scraping) go through this Redis; the worker consumes them.
+    REDIS_URL: redis://redis:6379/0
+  volumes:
+    # Filesystem storage. To use NFS, replace this with a bind mount of the NFS share
+    # (e.g. /mnt/roms:/data/media) or an NFS-backed named volume.
+    - birdroms_media:/data/media
 
 services:
   postgres:
@@ -23,28 +49,37 @@ services:
       timeout: 5s
       retries: 10
 
-  backend:
-    build:
-      context: ./backend
-      target: prod
-    image: ${BIRDROMS_BACKEND_IMAGE:-birdroms-backend:latest}
+  redis:
+    image: redis:7-alpine
     restart: unless-stopped
-    env_file:
-      - path: ${BIRDROMS_ENV_FILE:-./backend/.env}
-        required: false
-    environment:
-      # Fixed by this compose file's topology; everything else comes from backend/.env.
-      # Debug is pinned off so a stray DJANGO_DEBUG=True copied from .env.example cannot reach prod.
-      DJANGO_DEBUG: "False"
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      MEDIA_ROOT: /data/media
-    volumes:
-      # Filesystem storage. To use NFS, replace this with a bind mount of the NFS share
-      # (e.g. /mnt/roms:/data/media) or an NFS-backed named volume.
-      - birdroms_media:/data/media
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    <<: *backend-common
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Runs the Huey task queue consumer: cover-art scraping and the hourly missing-art sweep.
+  # Same image and settings as the backend; it does not migrate, so it waits for the backend.
+  worker:
+    <<: *backend-common
+    command: ["python", "manage.py", "run_huey"]
+    # The image's HEALTHCHECK probes the web port, which the worker does not serve.
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
         condition: service_healthy
 
   web:
