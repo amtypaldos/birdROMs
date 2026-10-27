@@ -28,11 +28,13 @@ from birdroms.uploads import parse_max_upload_bytes
 from .cover_art import (
     LIBRETRO_MATCH_THRESHOLD,
     best_libretro_name,
+    fetch_cover_for_rom,
     find_libretro,
     find_screenscraper,
     libretro_name_index,
     normalize_title,
     parse_cover_art_settings,
+    parse_screenscraper_metadata,
 )
 from .models import ROM
 from .services import (
@@ -117,15 +119,14 @@ class ROMPermissionTests(APITestCase):
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 LIBRETRO_ONLY = parse_cover_art_settings({"COVER_ART_PROVIDERS": "libretro", "COVER_ART_TIMEOUT": "3"})
-BOTH_PROVIDERS = parse_cover_art_settings(
-    {
-        "COVER_ART_PROVIDERS": "screenscraper,libretro",
-        "SS_DEV_ID": "dev",
-        "SS_DEV_PASSWORD": "devpass",
-        "SS_USER": "me",
-        "SS_PASSWORD": "secret",
-    }
-)
+BOTH_PROVIDERS_ENV = {
+    "COVER_ART_PROVIDERS": "screenscraper,libretro",
+    "SS_DEV_ID": "dev",
+    "SS_DEV_PASSWORD": "devpass",
+    "SS_USER": "me",
+    "SS_PASSWORD": "secret",
+}
+BOTH_PROVIDERS = parse_cover_art_settings(BOTH_PROVIDERS_ENV)
 
 
 class FakeResponse:
@@ -345,6 +346,164 @@ class ProviderTests(SimpleTestCase):
         self.assertEqual(params["systemeid"], 3)
         self.assertEqual((params["devid"], params["ssid"]), ("dev", "me"))
         self.assertEqual(get.call_args.kwargs["timeout"], 10.0)
+
+
+SS_JEU = {
+    "medias": [{"type": "box-2D", "region": "us", "url": "https://ss.example/box"}],
+    "synopsis": [
+        {"langue": "fr", "text": "Une chasseuse de primes."},
+        {"langue": "en", "text": "A bounty hunter explores planet Zebes."},
+    ],
+    "genres": [
+        {"id": "1", "noms": [{"langue": "fr", "text": "Plateforme"}, {"langue": "en", "text": "Platform"}]},
+        {"id": "2", "noms": [{"langue": "en", "text": "Action"}]},
+    ],
+    "dates": [{"region": "jp", "text": "1986-08-06"}, {"region": "us", "text": "1987-08-15"}],
+    "developpeur": {"id": "1", "text": "Nintendo R&D1"},
+    "editeur": {"id": "2", "text": "Nintendo"},
+    "joueurs": {"text": "1"},
+    "note": {"text": "17"},
+}
+SS_METADATA = {
+    "description": "A bounty hunter explores planet Zebes.",
+    "genre": "Platform, Action",
+    "release_year": 1987,
+    "developer": "Nintendo R&D1",
+    "publisher": "Nintendo",
+    "players": "1",
+    "rating": "17/20",
+    "region": "us",
+}
+
+
+class ParseScreenScraperMetadataTests(SimpleTestCase):
+    def test_parse_ss_metadata(self):
+        self.assertEqual(parse_screenscraper_metadata(SS_JEU), SS_METADATA)
+
+    def test_description_prefers_english_then_any_language(self):
+        jeu = {"synopsis": [{"langue": "de", "text": "Deutsch"}, {"langue": "fr", "text": "Francais"}]}
+        self.assertEqual(parse_screenscraper_metadata(jeu), {"description": "Deutsch"})
+
+    def test_release_date_prefers_region_order_and_tolerates_year_only(self):
+        jeu = {"dates": [{"region": "eu", "text": "1988"}, {"region": "jp", "text": "1986-08-06"}]}
+        self.assertEqual(parse_screenscraper_metadata(jeu), {"release_year": 1988, "region": "eu"})
+
+    def test_missing_and_malformed_fields_are_omitted(self):
+        self.assertEqual(parse_screenscraper_metadata({}), {})
+        jeu = {"dates": [{"region": "us", "text": "unknown"}], "synopsis": "bad", "note": {"text": ""}, "joueurs": None}
+        self.assertEqual(parse_screenscraper_metadata(jeu), {})
+
+    def test_values_are_clipped_to_column_width(self):
+        jeu = {"developpeur": {"text": "x" * 1000}}
+        self.assertEqual(len(parse_screenscraper_metadata(jeu)["developer"]), ROM._meta.get_field("developer").max_length)
+
+
+@override_settings(COVER_ART=BOTH_PROVIDERS)
+class ScreenScraperMetadataTests(APITestCase):
+    def setUp(self):
+        self.admin_user = make_user("admin", "super_admin")
+        self.rom = ROM.objects.create(title="Metroid", file=dummy_rom("metroid.nes"), uploaded_by=self.admin_user)
+
+    def ss_http(self, jeu=SS_JEU):
+        return fake_http(
+            {
+                "screenscraper.fr": FakeResponse(json_data={"response": {"jeu": jeu}}, content_type="application/json"),
+                "ss.example/box": FakeResponse(content=b"\xff\xd8jpeg", content_type="image/jpeg"),
+            }
+        )
+
+    def test_fetch_sets_metadata(self):
+        with mock.patch("apps.roms.cover_art.requests.get", self.ss_http()):
+            self.assertTrue(fetch_cover_for_rom(self.rom))
+
+        self.rom.refresh_from_db()
+        for field, value in SS_METADATA.items():
+            self.assertEqual(getattr(self.rom, field), value, field)
+        self.assertEqual(self.rom.cover_art_source, "screenscraper")
+        self.assertTrue(self.rom.cover_art)
+
+    def test_metadata_is_fetched_even_when_libretro_supplies_the_cover(self):
+        config = parse_cover_art_settings({**BOTH_PROVIDERS_ENV, "COVER_ART_PROVIDERS": "libretro,screenscraper"})
+        boxart = CoverArtScrapeTests.boxart
+        get = fake_http(
+            {
+                "screenscraper.fr": FakeResponse(json_data={"response": {"jeu": SS_JEU}}, content_type="application/json"),
+                boxart: FakeResponse(content=PNG_BYTES),
+            }
+        )
+        with mock.patch("apps.roms.cover_art.requests.get", get):
+            self.assertTrue(fetch_cover_for_rom(self.rom, config))
+
+        self.rom.refresh_from_db()
+        self.assertEqual(self.rom.cover_art_source, "libretro")
+        self.assertEqual(self.rom.genre, "Platform, Action")
+        self.assertEqual(self.rom.release_year, 1987)
+        ss_calls = [c for c in get.call_args_list if "screenscraper.fr" in c.args[0]]
+        self.assertEqual(len(ss_calls), 1)
+
+    def test_metadata_saved_even_without_cover_image(self):
+        jeu = {key: value for key, value in SS_JEU.items() if key != "medias"}
+        with mock.patch("apps.roms.cover_art.requests.get", self.ss_http(jeu)):
+            self.assertFalse(fetch_cover_for_rom(self.rom))  # Returns whether new art was saved.
+
+        self.rom.refresh_from_db()
+        self.assertFalse(self.rom.cover_art)
+        self.assertEqual(self.rom.publisher, "Nintendo")
+
+    def test_without_credentials_nothing_changes(self):
+        boxart = CoverArtScrapeTests.boxart
+        get = fake_http({boxart: FakeResponse(content=PNG_BYTES)})
+        with mock.patch("apps.roms.cover_art.requests.get", get):
+            self.assertTrue(fetch_cover_for_rom(self.rom, LIBRETRO_ONLY))
+            self.assertFalse(any("screenscraper.fr" in c.args[0] for c in get.call_args_list))
+
+        self.rom.refresh_from_db()
+        self.assertEqual(self.rom.cover_art_source, "libretro")
+        self.assertEqual((self.rom.description, self.rom.genre, self.rom.region), ("", "", ""))
+        self.assertIsNone(self.rom.release_year)
+
+    def test_screenscraper_failure_degrades_to_libretro_cover_without_metadata(self):
+        get = fake_http(
+            {
+                "screenscraper.fr": FakeResponse(status_code=500, content_type="text/plain"),
+                CoverArtScrapeTests.boxart: FakeResponse(content=PNG_BYTES),
+            }
+        )
+        with mock.patch("apps.roms.cover_art.requests.get", get), self.assertLogs("apps.roms.cover_art", "WARNING"):
+            self.assertTrue(fetch_cover_for_rom(self.rom))
+
+        self.rom.refresh_from_db()
+        self.assertEqual(self.rom.cover_art_source, "libretro")
+        self.assertEqual(self.rom.description, "")
+        ss_calls = [c for c in get.call_args_list if "screenscraper.fr" in c.args[0]]
+        self.assertEqual(len(ss_calls), 1)  # The failed lookup is not retried for metadata.
+
+    def test_concurrent_scrape_no_corruption(self):
+        with mock.patch("apps.roms.cover_art.requests.get", self.ss_http()):
+            fetch_cover_for_rom(self.rom)
+            fetch_cover_for_rom(self.rom)
+
+        self.rom.refresh_from_db()
+        _, stored = default_storage.listdir("covers")
+        covers = [name for name in stored if name.startswith(f"rom-{self.rom.pk}")]
+        self.assertEqual(covers, [Path(self.rom.cover_art.name).name])
+        with self.rom.cover_art.open("rb") as handle:
+            self.assertEqual(handle.read(), b"\xff\xd8jpeg")
+        for field, value in SS_METADATA.items():
+            self.assertEqual(getattr(self.rom, field), value, field)
+
+    def test_serializer_exposes_metadata_read_only(self):
+        self.client.force_authenticate(self.admin_user)
+        detail = reverse("rom-detail", args=[self.rom.pk])
+        with mock.patch("apps.roms.cover_art.requests.get", self.ss_http()):
+            fetch_cover_for_rom(self.rom)
+
+        data = self.client.get(detail).data
+        for field, value in SS_METADATA.items():
+            self.assertEqual(data[field], value, field)
+        self.assertEqual(self.client.patch(detail, {"genre": "Hacked", "release_year": 1}).status_code, status.HTTP_200_OK)
+        self.rom.refresh_from_db()
+        self.assertEqual((self.rom.genre, self.rom.release_year), ("Platform, Action", 1987))
 
 
 @override_settings(COVER_ART=LIBRETRO_ONLY)
