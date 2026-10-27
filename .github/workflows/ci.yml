@@ -19,6 +19,27 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    # Tests run on PostgreSQL (same engine as dev/prod); Django creates test_birdroms here.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: birdroms
+          POSTGRES_USER: birdroms
+          POSTGRES_PASSWORD: birdroms
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U birdroms -d birdroms"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_DB: birdroms
+      POSTGRES_USER: birdroms
+      POSTGRES_PASSWORD: birdroms
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -28,7 +49,7 @@ jobs:
           cache-dependency-glob: backend/uv.lock
       - name: Install dependencies
         run: uv sync --locked
-      # Test mode uses in-memory SQLite and a temp MEDIA_ROOT (spec 001): no Postgres or .env.
+      # Test mode uses the Postgres service above and a temp MEDIA_ROOT: no .env needed.
       - name: Run tests
         run: uv run python manage.py test
 
