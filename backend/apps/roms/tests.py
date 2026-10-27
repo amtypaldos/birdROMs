@@ -44,8 +44,8 @@ def dummy_rom(name="game.nes"):
 
 
 class TestSettingsTests(SimpleTestCase):
-    def test_tests_use_sqlite_and_temp_media_root(self):
-        self.assertEqual(settings.DATABASES["default"]["ENGINE"], "django.db.backends.sqlite3")
+    def test_tests_use_postgres_and_temp_media_root(self):
+        self.assertEqual(settings.DATABASES["default"]["ENGINE"], "django.db.backends.postgresql")
         self.assertNotEqual(Path(settings.MEDIA_ROOT).resolve(), (settings.BASE_DIR / "media").resolve())
 
 
