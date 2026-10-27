@@ -3,6 +3,7 @@ import mimetypes
 import re
 from pathlib import PurePosixPath
 
+from django.db.models import Count
 from django.http import FileResponse, Http404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -13,7 +14,7 @@ from birdroms.tasks import scrape_rom_cover
 from .models import ROM, Playlist
 from .pagination import ROMPagination
 from .permissions import IsPlaylistOwnerOrReadOnly, IsSuperAdminOrReadOnlyRole
-from .serializers import DeviceROMSerializer, PlaylistSerializer, ROMSerializer
+from .serializers import DeviceROMSerializer, PlaylistListSerializer, PlaylistSerializer, ROMSerializer
 from .cover_art import scrape_rom
 
 logger = logging.getLogger(__name__)
@@ -107,9 +108,22 @@ class ROMViewSet(viewsets.ModelViewSet):
 
 class PlaylistViewSet(viewsets.ModelViewSet):
     # The library is shared, so every authenticated user sees every playlist; only the owner edits.
-    queryset = Playlist.objects.select_related("created_by").prefetch_related("items__rom__uploaded_by")
+    # The list is unpaginated, so it carries only a count; everything else (detail and the
+    # create/update responses) loads the ordered items.
+    queryset = Playlist.objects.select_related("created_by")
     serializer_class = PlaylistSerializer
     permission_classes = [IsPlaylistOwnerOrReadOnly]
+
+    def get_serializer_class(self):
+        if self.action == "list":
+            return PlaylistListSerializer
+        return super().get_serializer_class()
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action == "list":
+            return queryset.annotate(rom_count=Count("items"))
+        return queryset.prefetch_related("items__rom")
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
