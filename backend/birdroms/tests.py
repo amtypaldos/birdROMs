@@ -5,7 +5,7 @@ from django.test import SimpleTestCase
 
 from huey import MemoryHuey, RedisHuey
 
-from birdroms.deploy_config import check_secret_key, parse_csv, parse_proxy_settings
+from birdroms.deploy_config import check_secret_key, parse_csv, parse_debug, parse_proxy_settings
 from birdroms.huey_config import build_huey, parse_sweep_crontab
 
 
@@ -20,6 +20,18 @@ class SecretKeyCheckTests(SimpleTestCase):
 
     def test_real_key_is_accepted_in_production(self):
         check_secret_key("a-long-random-value-from-secrets-token-urlsafe", debug=False)
+
+
+class ParseDebugTests(SimpleTestCase):
+    def test_debug_is_off_unless_explicitly_enabled(self):
+        self.assertFalse(parse_debug({}))
+        self.assertFalse(parse_debug({"DJANGO_DEBUG": ""}))
+        self.assertFalse(parse_debug({"DJANGO_DEBUG": "False"}))
+        self.assertFalse(parse_debug({"DJANGO_DEBUG": "yes please"}))
+
+    def test_debug_can_be_enabled_for_development(self):
+        self.assertTrue(parse_debug({"DJANGO_DEBUG": "True"}))
+        self.assertTrue(parse_debug({"DJANGO_DEBUG": " true "}))
 
 
 class ParseCsvTests(SimpleTestCase):

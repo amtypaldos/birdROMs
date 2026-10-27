@@ -1,6 +1,6 @@
-from pathlib import PurePosixPath
-
 import mimetypes
+import re
+from pathlib import PurePosixPath
 
 from django.http import FileResponse, Http404
 from rest_framework import status, viewsets
@@ -16,10 +16,14 @@ from .serializers import ROMSerializer
 from .cover_art import fetch_cover_for_rom
 
 
+# Control characters (CR/LF in particular) must never reach a response header.
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
 def download_filename(rom):
     """Friendly attachment name: the ROM title plus its extension, not the storage key
     (which may carry a dedup suffix like `zelda_OvlBGqX.nes`)."""
-    title = rom.title.replace("/", "_").replace("\\", "_").strip()
+    title = _CONTROL_CHARS.sub("", rom.title).replace("/", "_").replace("\\", "_").strip()
     if not title:
         return PurePosixPath(rom.file.name).name
     if rom.extension and not title.lower().endswith(rom.extension):

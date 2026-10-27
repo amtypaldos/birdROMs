@@ -9,7 +9,6 @@ dependencies = [
     "Django>=5.0",
     "django-storages[s3]>=1.14",
     "djangorestframework>=3.15",
-    "djangorestframework-simplejwt>=5.3",
     "gunicorn>=26.2.0",
     "huey>=3.5",
     "psycopg2-binary>=2.9",

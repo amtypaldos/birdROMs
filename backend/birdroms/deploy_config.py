@@ -11,6 +11,14 @@ def parse_csv(env, name) -> list:
     return [item.strip() for item in env.get(name, "").split(",") if item.strip()]
 
 
+def parse_debug(env) -> bool:
+    """`DJANGO_DEBUG`, failing closed: debug mode is on only when explicitly set to `true`.
+
+    An unset or mistyped value must never leave a production instance serving debug pages.
+    """
+    return env.get("DJANGO_DEBUG", "").strip().lower() == "true"
+
+
 def check_secret_key(secret_key: str, debug: bool) -> None:
     """Refuse to start in production with a missing or placeholder `DJANGO_SECRET_KEY`."""
     if not debug and secret_key.strip() in UNSAFE_SECRET_KEYS:

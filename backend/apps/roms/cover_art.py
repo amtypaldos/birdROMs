@@ -12,7 +12,7 @@ import os
 import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urljoin, urlsplit
 
 import requests
 from django.conf import settings
@@ -29,6 +29,34 @@ DEFAULT_PROVIDERS = (LIBRETRO, SCREENSCRAPER)
 DEFAULT_TIMEOUT = 10.0
 MAX_IMAGE_BYTES = 10 * 1024**2  # Cover art is small; anything larger is not a thumbnail.
 USER_AGENT = "birdROMs cover-art scraper"
+
+# Images are fetched only over HTTPS from these providers. ScreenScraper's payload is third-party
+# data, so its media URLs (and any redirect) are checked against this list before being requested.
+ALLOWED_IMAGE_HOSTS = frozenset({"thumbnails.libretro.com"})
+ALLOWED_IMAGE_DOMAINS = ("screenscraper.fr",)  # the domain itself and its subdomains
+MAX_REDIRECTS = 3
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+# ScreenScraper takes its credentials as query parameters, and requests' error messages (and our
+# own log lines) quote the URL, so they are masked before anything is logged.
+_SECRET_PARAMS = re.compile(r"(?i)\b(devid|devpassword|softname|ssid|sspassword)=[^&\s'\"]*")
+
+
+def redact_secrets(text) -> str:
+    """`text` with ScreenScraper credential query parameters masked, safe to log."""
+    return _SECRET_PARAMS.sub(lambda match: f"{match.group(1)}=***", str(text))
+
+
+def is_allowed_image_url(url: str) -> bool:
+    """True for an HTTPS URL on a known cover-art host, with no userinfo or custom port."""
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "https" or parts.username or parts.password or port not in (None, 443):
+        return False
+    return host in ALLOWED_IMAGE_HOSTS or any(host == d or host.endswith(f".{d}") for d in ALLOWED_IMAGE_DOMAINS)
 
 IMAGE_EXTENSIONS = {
     "image/png": ".png",
@@ -380,7 +408,9 @@ class ScreenScraperGame:
             try:
                 self._jeu = lookup_screenscraper_game(*self._args)
             except (requests.RequestException, ValueError) as exc:
-                logger.warning("Cover art provider %s failed for %r: %s", SCREENSCRAPER, self._args[0], exc)
+                logger.warning(
+                    "Cover art provider %s failed for %r: %s", SCREENSCRAPER, self._args[0], redact_secrets(exc)
+                )
         return self._jeu
 
     def image_urls(self):
@@ -394,22 +424,38 @@ FINDERS = {LIBRETRO: find_libretro, SCREENSCRAPER: find_screenscraper}
 
 
 def download_image(url, config):
-    """Fetch `url` and return `(bytes, extension)`, or None if it is missing or not an image."""
-    with requests.get(url, timeout=config.timeout, stream=True, headers={"User-Agent": USER_AGENT}) as response:
-        if response.status_code == 404:
+    """Fetch `url` and return `(bytes, extension)`, or None if it is missing, not an image, or not
+    on an allowed host. Redirects are followed by hand (at most `MAX_REDIRECTS`) so every hop is
+    checked against the allowlist, which keeps provider data from steering requests at internal hosts."""
+    for _ in range(MAX_REDIRECTS + 1):
+        if not is_allowed_image_url(url):
+            logger.warning("Refusing to fetch cover art from disallowed host %r.", urlsplit(url).hostname)
             return None
-        response.raise_for_status()
-        content_type = response.headers.get("Content-Type", "").split(";")[0].strip().lower()
-        extension = IMAGE_EXTENSIONS.get(content_type)
-        if not extension:
-            return None
-        data = bytearray()
-        for chunk in response.iter_content(64 * 1024):
-            data.extend(chunk)
-            if len(data) > MAX_IMAGE_BYTES:
-                logger.warning("Cover art at %s exceeds %d bytes; skipping.", url, MAX_IMAGE_BYTES)
+        with requests.get(
+            url, timeout=config.timeout, stream=True, allow_redirects=False, headers={"User-Agent": USER_AGENT}
+        ) as response:
+            if response.status_code in _REDIRECT_STATUSES:
+                location = response.headers.get("Location")
+                if not location:
+                    return None
+                url = urljoin(url, location)
+                continue
+            if response.status_code == 404:
                 return None
-        return (bytes(data), extension) if data else None
+            response.raise_for_status()
+            content_type = response.headers.get("Content-Type", "").split(";")[0].strip().lower()
+            extension = IMAGE_EXTENSIONS.get(content_type)
+            if not extension:
+                return None
+            data = bytearray()
+            for chunk in response.iter_content(64 * 1024):
+                data.extend(chunk)
+                if len(data) > MAX_IMAGE_BYTES:
+                    logger.warning("Cover art at %s exceeds %d bytes; skipping.", redact_secrets(url), MAX_IMAGE_BYTES)
+                    return None
+            return (bytes(data), extension) if data else None
+    logger.warning("Too many redirects fetching cover art; giving up.")
+    return None
 
 
 def scrape_cover_art(title, platform, filename="", config=None, screenscraper=None):
@@ -428,7 +474,7 @@ def scrape_cover_art(title, platform, filename="", config=None, screenscraper=No
                 if image:
                     return image[0], image[1], CoverArtResult(image_url=url, source=provider)
         except (requests.RequestException, ValueError) as exc:
-            logger.warning("Cover art provider %s failed for %r: %s", provider, title, exc)
+            logger.warning("Cover art provider %s failed for %r: %s", provider, title, redact_secrets(exc))
     return None
 
 
