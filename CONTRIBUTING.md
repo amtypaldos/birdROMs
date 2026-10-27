@@ -10,8 +10,9 @@ hot reload (see the README's Quick Start). To run things directly on your machin
 
 - Python 3 and [uv](https://docs.astral.sh/uv/) for the backend
 - Node.js with corepack (run `corepack enable` once to get Yarn) for the frontend
-- PostgreSQL for running the dev server — the root `docker-compose.yml` starts one:
-  `docker compose up -d postgres`
+- A local PostgreSQL server (`just db-init` creates the `birdroms` role and database)
+- [just](https://github.com/casey/just) for the shortcuts in the root `justfile`
+  (`db-init`, `migrate`, `backend`, `frontend`, `test`, `lint`)
 
 ## Local development
 
@@ -42,8 +43,9 @@ The dev server expects the API at `http://localhost:8000/api`.
 
 ## Running the tests
 
-Backend tests use in-memory SQLite and a temporary media directory, so they need neither
-PostgreSQL nor a `.env`:
+Backend tests run on PostgreSQL (Django creates a `test_birdroms` database; `just db-init`
+sets up the role) and a temporary media directory, so they need no `.env`. `just test` runs
+the backend and frontend suites together:
 
 ```bash
 cd backend
