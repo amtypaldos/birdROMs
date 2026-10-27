@@ -11,8 +11,10 @@ dependencies = [
     "djangorestframework>=3.15",
     "djangorestframework-simplejwt>=5.3",
     "gunicorn>=26.2.0",
+    "huey>=3.5",
     "psycopg2-binary>=2.9",
     "python-dotenv>=1.0",
+    "redis>=5",
     "requests>=2.31",
     "whitenoise>=6.12.0",
 ]

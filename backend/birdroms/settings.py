@@ -11,6 +11,7 @@ from apps.roms.cover_art import parse_cover_art_settings
 
 from .auth_config import parse_allow_local_login, parse_auth_methods, parse_oidc_settings
 from .deploy_config import check_secret_key, parse_csv, parse_proxy_settings
+from .huey_config import build_huey
 from .storage import build_storages
 from .uploads import parse_max_upload_bytes
 
@@ -39,6 +40,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "rest_framework",
     "rest_framework.authtoken",
+    "huey.contrib.djhuey",
     "apps.accounts",
     "apps.roms",
 ]
@@ -113,6 +115,10 @@ MAX_ROM_UPLOAD_BYTES = parse_max_upload_bytes(os.environ)
 # see apps/roms/cover_art.py and .env.example.
 COVER_ART = parse_cover_art_settings(os.environ)
 
+# Background-task queue: runs tasks inline under DEBUG / HUEY_IMMEDIATE=true, else on Redis
+# (REDIS_URL) via `manage.py run_huey`; see birdroms/huey_config.py and .env.example.
+HUEY = build_huey(os.environ, DEBUG)
+
 # Enabled login methods (`local`, `oidc`); see birdroms/auth_config.py and .env.example.
 AUTH_METHODS = parse_auth_methods(os.environ)
 # Local username/password login is always on when this is true (defaults to DEBUG).
@@ -134,6 +140,8 @@ if TESTING:
     OIDC = parse_oidc_settings({}, AUTH_METHODS)
     # No live provider calls from tests; scraping tests opt in with mocked HTTP.
     COVER_ART = parse_cover_art_settings({"COVER_ART_PROVIDERS": ""})
+    # Tasks run inline; tests never need Redis or a worker.
+    HUEY = build_huey({"HUEY_IMMEDIATE": "true"}, DEBUG)
 
 if not TESTING:
     check_secret_key(SECRET_KEY, DEBUG)
