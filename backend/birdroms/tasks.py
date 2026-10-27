@@ -9,9 +9,11 @@ a long-lived `run_huey` worker needs (and which is a no-op in immediate mode). T
 
 import os
 
+from huey import crontab
 from huey.contrib.djhuey import HUEY as huey
 from huey.contrib.djhuey import db_periodic_task, db_task, periodic_task, task
 
+from apps.accounts.services import expire_stale_pairings
 from apps.roms.cover_art import safe_fetch_cover_for_rom
 from apps.roms.models import ROM
 
@@ -23,6 +25,7 @@ __all__ = [
     "huey",
     "periodic_task",
     "scrape_rom_cover",
+    "sweep_expired_pairings",
     "sweep_missing_cover_art",
     "task",
 ]
@@ -58,3 +61,9 @@ def sweep_missing_cover_art() -> int:
         scrape_rom_cover(rom_id)
         queued += 1
     return queued
+
+
+@db_periodic_task(crontab(minute="*"))
+def sweep_expired_pairings() -> None:
+    """Revoke device tokens from pairings approved but never collected (see `expire_stale_pairings`)."""
+    expire_stale_pairings()

@@ -1,15 +1,20 @@
 import re
+from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth.models import Group, User
 from django.db import transaction
+from django.utils import timezone
 from rest_framework.authtoken.models import Token
 
-from .models import OIDCIdentity
+from .models import DeviceToken, OIDCIdentity, PairingRequest
 
 SUPER_ADMIN = "super_admin"
 READONLY = "readonly"
 ROLE_GROUPS = (SUPER_ADMIN, READONLY)
+
+# Expired pairing rows are kept this long so a late poll still reads "gone" rather than "unknown".
+PAIRING_RETENTION = timedelta(hours=1)
 
 _oidc_clients = {}
 
@@ -130,3 +135,18 @@ def provision_oidc_user(claims):
     if not user.is_superuser:
         set_role(user, role_from_claims(claims))
     return user
+
+
+def expire_stale_pairings(now=None):
+    """Kill pairings that were approved but never collected, and drop long-expired rows.
+
+    An approved request holds a live device token and its raw secret until the device polls. Once the
+    request has expired nobody can collect it, so the token is revoked and the secret blanked. Runs
+    from the periodic `sweep_expired_pairings` task and opportunistically on `pair/start`.
+    """
+    now = now or timezone.now()
+    stale = PairingRequest.objects.filter(expires_at__lte=now, consumed=False, device_token__isnull=False)
+    DeviceToken.objects.filter(pk__in=stale.values("device_token")).update(revoked=True)
+    stale.exclude(pending_token="").update(pending_token="")
+    # Tokens were revoked above, so deleting the rows can't orphan a live credential.
+    PairingRequest.objects.filter(expires_at__lt=now - PAIRING_RETENTION).delete()

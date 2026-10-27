@@ -3,6 +3,7 @@ from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
 from django.conf import settings
+from django.contrib import admin
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.core.exceptions import ImproperlyConfigured
@@ -17,8 +18,9 @@ from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import PAIRING_CODE_ALPHABET, DeviceToken, OIDCIdentity, PairingRequest, hash_device_token
-from apps.accounts.services import set_role, user_role
+from apps.accounts.services import expire_stale_pairings, set_role, user_role
 from birdroms.auth_config import parse_allow_local_login, parse_auth_methods, parse_oidc_settings
+from birdroms.tasks import sweep_expired_pairings
 
 
 class RegisterTests(APITestCase):
@@ -516,6 +518,68 @@ class DevicePairingTests(APITestCase):
         self.assertFalse(PairingRequest.objects.filter(code=old).exists())
         self.assertTrue(PairingRequest.objects.filter(code=recent).exists())
 
+    def _approve_then_expire_without_polling(self):
+        code = self._start()["code"]
+        self._approve(code)
+        raw = PairingRequest.objects.get(code=code).pending_token
+        self.assertTrue(raw)  # Held until collected.
+        self._expire(code)
+        return code, raw
+
+    def _assert_orphan_is_dead(self, code, raw):
+        self.assertTrue(DeviceToken.objects.get().revoked)
+        self.assertEqual(PairingRequest.objects.get(code=code).pending_token, "")
+        response = self.client.get(reverse("me"), HTTP_AUTHORIZATION=f"Device {raw}")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_approved_but_never_polled_request_is_revoked_when_swept(self):
+        code, raw = self._approve_then_expire_without_polling()
+
+        expire_stale_pairings()
+
+        self._assert_orphan_is_dead(code, raw)
+
+    def test_sweep_task_revokes_uncollected_pairings(self):
+        code, raw = self._approve_then_expire_without_polling()
+
+        sweep_expired_pairings.call_local()
+
+        self._assert_orphan_is_dead(code, raw)
+
+    def test_sweep_leaves_live_and_collected_pairings_alone(self):
+        live = self._start()["code"]
+        self._approve(live)
+        collected_raw = self._pair_device()
+        collected = PairingRequest.objects.get(consumed=True)
+        self._expire(collected.code)
+
+        expire_stale_pairings()
+
+        self.assertFalse(DeviceToken.objects.filter(revoked=True).exists())
+        self.assertTrue(PairingRequest.objects.get(code=live).pending_token)
+        response = self.client.get(reverse("me"), HTTP_AUTHORIZATION=f"Device {collected_raw}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_start_also_sweeps_uncollected_pairings(self):
+        code, raw = self._approve_then_expire_without_polling()
+
+        self._start()
+
+        self._assert_orphan_is_dead(code, raw)
+
+    def test_purging_old_rows_never_leaves_a_live_orphan_token(self):
+        code, raw = self._approve_then_expire_without_polling()
+        PairingRequest.objects.filter(code=code).update(expires_at=timezone.now() - timedelta(days=1))
+
+        expire_stale_pairings()
+
+        self.assertFalse(PairingRequest.objects.filter(code=code).exists())
+        self.assertTrue(DeviceToken.objects.get().revoked)
+
+    def test_device_token_admin_cannot_add_tokens(self):
+        model_admin = admin.site._registry[DeviceToken]
+        self.assertFalse(model_admin.has_add_permission(None))
+
     def test_approve_requires_auth_and_mints_token(self):
         code = self._start()["code"]
 
@@ -572,6 +636,7 @@ class DevicePairingTests(APITestCase):
 
         self.assertEqual(done.status_code, status.HTTP_200_OK)
         self.assertEqual(done.data["user"]["username"], "owner")
+        self.assertEqual(done["Cache-Control"], "no-store")
         raw = done.data["device_token"]
         # Only a digest is kept; the raw secret authenticates but is not at rest.
         device_token = DeviceToken.objects.get()

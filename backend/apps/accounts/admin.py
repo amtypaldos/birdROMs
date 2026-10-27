@@ -17,3 +17,7 @@ class DeviceTokenAdmin(admin.ModelAdmin):
     list_filter = ("revoked",)
     search_fields = ("name", "user__username")
     readonly_fields = ("created_at", "last_used_at")
+
+    def has_add_permission(self, request):
+        # Tokens only come from the pairing flow; a hand-made row would have no usable secret.
+        return False

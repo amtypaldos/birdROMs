@@ -18,11 +18,10 @@ from rest_framework.views import APIView
 
 from .models import DeviceToken, PairingRequest, generate_pairing_code
 from .serializers import UserSerializer
+from .services import expire_stale_pairings
 from .throttles import PairCodeThrottle, PairStartThrottle
 
 PAIRING_TTL = timedelta(minutes=5)
-# Expired rows are kept this long so a late poll still reads "gone" rather than "unknown".
-PAIRING_RETENTION = timedelta(hours=1)
 # Where the web app's approve page lives; it reads `?code=` and calls `pair/approve`.
 APPROVE_PAGE_PATH = "/pair"
 
@@ -41,7 +40,7 @@ def _normalize_code(value) -> str:
 def _create_pairing_request(request):
     """Create a pending request with a fresh unique code."""
     now = timezone.now()
-    PairingRequest.objects.filter(expires_at__lt=now - PAIRING_RETENTION).delete()
+    expire_stale_pairings(now)
     while True:
         code = generate_pairing_code()
         try:
@@ -130,4 +129,7 @@ class PairPollView(APIView):
             pairing.pending_token = ""
             pairing.consumed = True
             pairing.save(update_fields=["pending_token", "consumed"])
-        return Response({"device_token": raw, "user": UserSerializer(pairing.approved_by).data})
+        # A secret in a GET response must never be cached by a browser, proxy or HTTP library.
+        return Response(
+            {"device_token": raw, "user": UserSerializer(pairing.approved_by).data}, headers={"Cache-Control": "no-store"}
+        )
