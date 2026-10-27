@@ -1,10 +1,12 @@
+import datetime
+
 from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase
 
 from huey import MemoryHuey, RedisHuey
 
 from birdroms.deploy_config import check_secret_key, parse_csv, parse_proxy_settings
-from birdroms.huey_config import build_huey
+from birdroms.huey_config import build_huey, parse_sweep_crontab
 
 
 class SecretKeyCheckTests(SimpleTestCase):
@@ -81,6 +83,22 @@ class HueyConfigTests(SimpleTestCase):
     def test_invalid_immediate_flag_fails_fast(self):
         with self.assertRaises(ImproperlyConfigured):
             build_huey({"HUEY_IMMEDIATE": "maybe"}, debug=False)
+
+
+class SweepCrontabTests(SimpleTestCase):
+    def test_defaults_to_top_of_every_hour(self):
+        validator = parse_sweep_crontab({})
+        self.assertTrue(validator(datetime.datetime(2026, 1, 5, 13, 0)))
+        self.assertFalse(validator(datetime.datetime(2026, 1, 5, 13, 30)))
+
+    def test_env_overrides_the_schedule(self):
+        validator = parse_sweep_crontab({"COVER_ART_SWEEP_CRONTAB": "*/15 3 * * *"})
+        self.assertTrue(validator(datetime.datetime(2026, 1, 5, 3, 45)))
+        self.assertFalse(validator(datetime.datetime(2026, 1, 5, 4, 45)))
+
+    def test_malformed_expression_fails_fast(self):
+        with self.assertRaises(ImproperlyConfigured):
+            parse_sweep_crontab({"COVER_ART_SWEEP_CRONTAB": "hourly"})
 
 
 class HueyWrapperTests(SimpleTestCase):

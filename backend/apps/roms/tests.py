@@ -22,7 +22,7 @@ from rest_framework.test import APITestCase
 from storages.backends.s3 import S3Storage
 
 from birdroms.storage import FILESYSTEM_STORAGE, S3_STORAGE, build_storages
-from birdroms.tasks import scrape_rom_cover
+from birdroms.tasks import scrape_rom_cover, sweep_missing_cover_art
 from birdroms.uploads import parse_max_upload_bytes
 
 from .cover_art import (
@@ -693,6 +693,21 @@ class ScrapeCoverTaskTests(APITestCase):
             "apps.roms.cover_art", "ERROR"
         ):
             self.assertFalse(scrape_rom_cover.call_local(rom.pk))
+
+
+class SweepMissingCoverArtTests(TestCase):
+    def test_sweep_enqueues_only_missing(self):
+        admin_user = make_user("admin", "super_admin")
+        missing_a = ROM.objects.create(title="Metroid", file=dummy_rom("metroid.nes"), uploaded_by=admin_user)
+        missing_b = ROM.objects.create(title="Kid Icarus", file=dummy_rom("icarus.nes"), uploaded_by=admin_user)
+        covered = ROM.objects.create(title="Zelda", file=dummy_rom("zelda.nes"), uploaded_by=admin_user)
+        covered.cover_art.save("zelda.png", ContentFile(b"art"), save=True)
+
+        with mock.patch("birdroms.tasks.scrape_rom_cover") as scrape:
+            sweep_missing_cover_art.call_local()
+
+        self.assertEqual({call.args[0] for call in scrape.call_args_list}, {missing_a.pk, missing_b.pk})
+        self.assertEqual(scrape.call_count, 2)
 
 
 @override_settings(COVER_ART=LIBRETRO_ONLY)
