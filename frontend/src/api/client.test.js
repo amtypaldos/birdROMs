@@ -144,6 +144,30 @@ describe("api client", () => {
     expect(options.headers.Authorization).toBe("Token abc123");
   });
 
+  it("approves a pairing code with an authenticated JSON POST", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({ detail: "Device approved." }) });
+    vi.stubGlobal("fetch", fetchMock);
+    setToken("abc123");
+
+    expect(await api.approveDevice("ABC123")).toEqual({ detail: "Device approved." });
+
+    const [path, options] = fetchMock.mock.calls[0];
+    expect(path).toBe("/api/devices/pair/approve");
+    expect(options.method).toBe("POST");
+    expect(options.headers.Authorization).toBe("Token abc123");
+    expect(options.headers["Content-Type"]).toBe("application/json");
+    expect(JSON.parse(options.body)).toEqual({ code: "ABC123" });
+  });
+
+  it("surfaces the server's detail message when approval is refused", async () => {
+    const body = JSON.stringify({ detail: "This pairing code has expired." });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 410, text: () => Promise.resolve(body) }));
+
+    await expect(api.approveDevice("ABC123")).rejects.toThrow("This pairing code has expired.");
+  });
+
   it("parses Content-Disposition filenames", () => {
     expect(filenameFromDisposition('attachment; filename="Zelda.nes"')).toBe("Zelda.nes");
     expect(filenameFromDisposition("attachment; filename*=UTF-8''Pok%C3%A9mon.gb")).toBe("Pokémon.gb");

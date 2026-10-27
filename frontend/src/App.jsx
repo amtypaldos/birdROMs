@@ -461,6 +461,63 @@ function RomList({ romPage, loading, query, platforms, onQuery, onScrape, onDown
   );
 }
 
+// A handheld's QR opens `/pair?code=XXXXXX` on the owner's phone.
+function initialPairing() {
+  if (window.location.pathname.replace(/\/$/, "") !== "/pair") return null;
+  return { code: (new URLSearchParams(window.location.search).get("code") || "").trim() };
+}
+
+function ApprovePanel({ code, authed, onDone }) {
+  const [status, setStatus] = useState("idle"); // idle | busy | approved
+  const [error, setError] = useState("");
+
+  async function handleApprove() {
+    if (status !== "idle") return;
+    setStatus("busy");
+    try {
+      await api.approveDevice(code);
+      setError("");
+      setStatus("approved");
+    } catch (err) {
+      setError(String(err.message || err));
+      setStatus("idle");
+    }
+  }
+
+  return (
+    <section className="card auth-card">
+      <p className="eyebrow" aria-hidden="true">Player 2 joined?</p>
+      <h2>Approve device</h2>
+      <div className="stack">
+        {!code ? (
+          <p className="error" role="alert">This link has no pairing code. Scan the QR code on your device again.</p>
+        ) : (
+          <>
+            <p className="muted">Pairing code</p>
+            <p className="pair-code">{code}</p>
+          </>
+        )}
+        {code && !authed ? <p className="muted">Log in to approve this device.</p> : null}
+        {code && authed && status === "approved" ? (
+          <p role="status">Device approved — it will connect shortly.</p>
+        ) : null}
+        {code && authed && status !== "approved" ? (
+          <>
+            <p className="muted">Only approve a device you are holding right now.</p>
+            {error ? <p className="error" role="alert">{error}</p> : null}
+            <button className="primary" disabled={status === "busy"} onClick={handleApprove}>
+              {status === "busy" ? "Approving…" : "Approve this device"}
+            </button>
+          </>
+        ) : null}
+        {authed ? (
+          <button className="ghost" onClick={onDone}>Go to library</button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 const SUPER_ADMIN = "super_admin";
 
 function SessionBar({ me, onRefresh, onLogout }) {
@@ -491,6 +548,7 @@ function initialAuth() {
 
 export default function App() {
   const [initial] = useState(initialAuth);
+  const [pairing, setPairing] = useState(initialPairing);
   const [romPage, setRomPage] = useState(EMPTY_PAGE);
   const [query, setQuery] = useState(DEFAULT_QUERY);
   const [platforms, setPlatforms] = useState([]);
@@ -555,6 +613,11 @@ export default function App() {
     setMe(null);
   }
 
+  function leavePairing() {
+    window.history.replaceState(null, "", "/");
+    setPairing(null);
+  }
+
   // Write controls are only rendered for super_admin, and not until the role is known.
   const canWrite = me?.role === SUPER_ADMIN;
 
@@ -566,10 +629,11 @@ export default function App() {
         </h1>
         {authed ? <SessionBar me={me} onRefresh={loadRoms} onLogout={logout} /> : null}
       </header>
-      <main className={`container${authed ? "" : " container-auth"}`}>
+      <main className={`container${authed && !pairing ? "" : " container-auth"}`}>
         {error ? <p className="error banner" role="alert">{error}</p> : null}
+        {pairing ? <ApprovePanel code={pairing.code} authed={authed} onDone={leavePairing} /> : null}
         {!authed ? <AuthPanel config={authConfig} onAuthed={() => setAuthed(true)} /> : null}
-        {authed ? (
+        {authed && !pairing ? (
           <>
             {canWrite ? <GlobalDropzone onUploaded={loadRoms} /> : null}
             {canWrite ? <UploadPanel onUploaded={loadRoms} /> : null}

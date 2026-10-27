@@ -21,7 +21,8 @@ vi.mock("./api/client", () => ({
     scrapeCover: vi.fn(),
     downloadRom: vi.fn(() => Promise.resolve()),
     coverObjectUrl: vi.fn(() => Promise.resolve("blob:cover")),
-    coverExists: vi.fn(() => Promise.resolve(false))
+    coverExists: vi.fn(() => Promise.resolve(false)),
+    approveDevice: vi.fn(() => Promise.resolve({ detail: "Device approved." }))
   }
 }));
 
@@ -496,5 +497,89 @@ describe("cover polling", () => {
 
     expect(api.coverExists).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("approve device page", () => {
+  function openPairLink(search = "?code=ABC123") {
+    window.history.pushState(null, "", `/pair${search}`);
+  }
+
+  afterEach(() => {
+    window.history.pushState(null, "", "/");
+  });
+
+  it("test_approve_device_page_calls_api_and_shows_result", async () => {
+    getToken.mockReturnValue("tok");
+    openPairLink();
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Approve device" })).toBeInTheDocument();
+    expect(screen.getByText("ABC123")).toBeInTheDocument();
+    expect(screen.queryByText("ROM Library")).not.toBeInTheDocument();
+    expect(api.approveDevice).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve this device" }));
+
+    await waitFor(() => expect(api.approveDevice).toHaveBeenCalledWith("ABC123"));
+    expect(await screen.findByText(/Device approved/)).toHaveAttribute("role", "status");
+    expect(screen.queryByRole("button", { name: "Approve this device" })).not.toBeInTheDocument();
+  });
+
+  it("shows a readable error when approval is rejected and allows retrying", async () => {
+    getToken.mockReturnValue("tok");
+    openPairLink();
+    api.approveDevice.mockRejectedValueOnce(new Error("This pairing code has expired."));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Approve this device" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("This pairing code has expired.");
+    expect(screen.queryByText(/Device approved/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve this device" }));
+    expect(await screen.findByText(/Device approved/)).toBeInTheDocument();
+    expect(api.approveDevice).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks a signed-out visitor to log in, then shows the approve view", async () => {
+    getToken.mockReturnValue(null);
+    openPairLink();
+    api.login.mockResolvedValueOnce({ token: "loctok" });
+
+    render(<App />);
+
+    expect(await screen.findByText(/log in to approve/i)).toBeInTheDocument();
+    expect(screen.getByText("ABC123")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve this device" })).not.toBeInTheDocument();
+    expect(api.approveDevice).not.toHaveBeenCalled();
+
+    getToken.mockReturnValue("loctok");
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "alice" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "pw" } });
+    fireEvent.click(screen.getByRole("button", { name: "Login" }));
+
+    expect(await screen.findByRole("button", { name: "Approve this device" })).toBeInTheDocument();
+    expect(api.approveDevice).not.toHaveBeenCalled();
+  });
+
+  it("explains a pairing link that has no code", async () => {
+    getToken.mockReturnValue("tok");
+    openPairLink("");
+
+    render(<App />);
+
+    expect(await screen.findByText(/no pairing code/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve this device" })).not.toBeInTheDocument();
+  });
+
+  it("leaves the library alone on ordinary paths", async () => {
+    getToken.mockReturnValue("tok");
+
+    render(<App />);
+
+    expect(await screen.findByText("ROM Library")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Approve device" })).not.toBeInTheDocument();
   });
 });
