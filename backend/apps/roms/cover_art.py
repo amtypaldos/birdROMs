@@ -237,7 +237,12 @@ def find_libretro(title, platform, filename, config):
     system = LIBRETRO_SYSTEMS.get(platform)
     if not system:
         return []
-    index = libretro_name_index(system, config.timeout)
+    try:
+        index = libretro_name_index(system, config.timeout)
+    except requests.RequestException as exc:
+        # Without the index we can still guess the exact name, as we did before it existed.
+        logger.warning("libretro name index for %s unavailable: %s", system, exc)
+        index = []
     # Use libretro's own spelling when we can match it; otherwise guess the name as given.
     names = []
     for candidate in _title_candidates(title, filename):
