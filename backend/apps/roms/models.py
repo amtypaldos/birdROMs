@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.db import models
 
-from .services import classify_platform_from_extension
+from .services import classify_platform_from_extension, get_extension
 
 
 class ROM(models.Model):
@@ -9,7 +9,8 @@ class ROM(models.Model):
     platform = models.CharField(max_length=120, blank=True)
     file = models.FileField(upload_to="roms/")
     extension = models.CharField(max_length=20, blank=True)
-    cover_art_url = models.URLField(blank=True)
+    # Scraped cover image, stored in the configured storage (served via /api/roms/{id}/cover/).
+    cover_art = models.FileField(upload_to="covers/", blank=True)
     cover_art_source = models.CharField(max_length=120, blank=True)
     uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="roms")
     uploaded_at = models.DateTimeField(auto_now_add=True)
@@ -19,10 +20,9 @@ class ROM(models.Model):
 
     def save(self, *args, **kwargs):
         if self.file and self.file.name:
-            filename = self.file.name.lower()
-            self.extension = f".{filename.split('.')[-1]}" if "." in filename else ""
+            self.extension = get_extension(self.file.name)
             if not self.platform:
-                self.platform = classify_platform_from_extension(filename)
+                self.platform = classify_platform_from_extension(self.file.name)
         super().save(*args, **kwargs)
 
     def __str__(self):

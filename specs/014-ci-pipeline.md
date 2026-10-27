@@ -1,6 +1,6 @@
 # 014 — CI pipeline (GitHub Actions)
 
-## Status: DRAFT
+## Status: COMPLETE
 Priority: 14 (lowest)
 
 ## Problem / Context
@@ -19,14 +19,14 @@ and the frontend lint/build/test on every push and PR. Depends on specs 001 and 
 
 ## Completion Signal
 Implementation:
-- [ ] `ci.yml` with backend + frontend jobs on push/PR.
-- [ ] Backend job runs tests without external Postgres; frontend runs lint/test/build.
-- [ ] README mentions CI.
+- [x] `ci.yml` with backend + frontend jobs on push/PR.
+- [x] Backend job runs tests without external Postgres; frontend runs lint/test/build.
+- [x] README mentions CI.
 
 Testing:
-- [ ] The exact workflow commands all pass locally from a clean checkout.
-- [ ] `ci.yml` parses as valid YAML.
+- [x] The exact workflow commands all pass locally from a clean checkout.
+- [x] `ci.yml` parses as valid YAML.
 
 Commit and push. When every spec in `specs/` is COMPLETE, output `<promise>ALL_DONE</promise>`.
 
-<!-- NR_OF_TRIES: 0 -->
+<!-- NR_OF_TRIES: 1 -->

@@ -1,6 +1,6 @@
 # 008 — Configurable authentication (local + OIDC/SSO, Pocket ID reference)
 
-## Status: DRAFT
+## Status: COMPLETE
 Priority: 8
 
 ## Problem / Context
@@ -33,18 +33,18 @@ the method set env-driven. (SAML is explicitly out of scope — OIDC covers the 
 
 ## Completion Signal
 Implementation:
-- [ ] `AUTH_METHODS` gating + `GET /api/auth/config/` reporting enabled methods.
-- [ ] Local login/register honoring `AUTH_METHODS` and `ALLOW_LOCAL_LOGIN`.
-- [ ] Generic OIDC login + callback + user provisioning + role mapping (env-configured).
-- [ ] `GET /api/auth/me/` returning user + role.
-- [ ] Frontend renders only enabled methods; OIDC + local both wired.
+- [x] `AUTH_METHODS` gating + `GET /api/auth/config/` reporting enabled methods.
+- [x] Local login/register honoring `AUTH_METHODS` and `ALLOW_LOCAL_LOGIN`.
+- [x] Generic OIDC login + callback + user provisioning + role mapping (env-configured).
+- [x] `GET /api/auth/me/` returning user + role.
+- [x] Frontend renders only enabled methods; OIDC + local both wired.
 
 Testing:
-- [ ] Backend tests (mocking the OIDC provider — no live SSO): OIDC role mapping; `/me`;
+- [x] Backend tests (mocking the OIDC provider — no live SSO): OIDC role mapping; `/me`;
       local endpoints enabled/disabled per `AUTH_METHODS`/`ALLOW_LOCAL_LOGIN`; `/auth/config/`
       reflects the enabled set.
-- [ ] `uv run python manage.py test`, `yarn test`, `yarn lint`, `yarn build` pass.
+- [x] `uv run python manage.py test`, `yarn test`, `yarn lint`, `yarn build` pass.
 
 Commit and push. Output `<promise>DONE</promise>` only when all boxes are verified.
 
-<!-- NR_OF_TRIES: 0 -->
+<!-- NR_OF_TRIES: 1 -->
