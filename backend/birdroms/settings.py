@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from apps.roms.cover_art import parse_cover_art_settings
 
 from .auth_config import parse_allow_local_login, parse_auth_methods, parse_oidc_settings
-from .deploy_config import check_secret_key, parse_csv, parse_proxy_settings
+from .deploy_config import check_secret_key, parse_csv, parse_debug, parse_proxy_settings
 from .huey_config import build_huey
 from .storage import build_storages
 from .uploads import parse_max_upload_bytes
@@ -20,7 +20,8 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "unsafe-dev-secret-key")
-DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() == "true"
+# Fails closed: debug is off unless DJANGO_DEBUG=True (set in the .env copied from .env.example).
+DEBUG = parse_debug(os.environ)
 ALLOWED_HOSTS = parse_csv(os.environ, "DJANGO_ALLOWED_HOSTS") or ["localhost"]
 
 # Reverse-proxy / HTTPS settings (CSRF_TRUSTED_ORIGINS, SECURE_PROXY_SSL_HEADER, secure
@@ -148,6 +149,11 @@ if not TESTING:
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+LOGIN_THROTTLE_RATES = {"login": "10/min", "register": "10/hour"}
+if TESTING:
+    # Effectively unlimited so unrelated tests never trip a throttle; throttle tests patch the rates.
+    LOGIN_THROTTLE_RATES = {"login": "100000/min", "register": "100000/min"}
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.TokenAuthentication",
@@ -156,4 +162,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+    # Scopes used by the throttles in apps/accounts/throttles.py (login is keyed per username,
+    # register per client address).
+    "DEFAULT_THROTTLE_RATES": LOGIN_THROTTLE_RATES,
 }

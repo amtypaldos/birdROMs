@@ -34,6 +34,8 @@ services:
         required: false
     environment:
       # Fixed by this compose file's topology; everything else comes from backend/.env.
+      # Debug is pinned off so a stray DJANGO_DEBUG=True copied from .env.example cannot reach prod.
+      DJANGO_DEBUG: "False"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       MEDIA_ROOT: /data/media

@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .serializers import MeSerializer, RegisterSerializer, UserSerializer
+from .throttles import LoginThrottle, RegisterThrottle
 from .services import (
     READONLY,
     enabled_methods,
@@ -50,6 +51,7 @@ class AuthConfigView(APIView):
 
 class RegisterView(LocalLoginRequiredMixin, APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [RegisterThrottle]
 
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
@@ -61,6 +63,8 @@ class RegisterView(LocalLoginRequiredMixin, APIView):
 
 
 class LoginView(LocalLoginRequiredMixin, ObtainAuthToken):
+    throttle_classes = [LoginThrottle]
+
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)
         token = Token.objects.get(key=response.data["token"])

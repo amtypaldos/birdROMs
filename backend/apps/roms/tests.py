@@ -27,7 +27,12 @@ from birdroms.uploads import parse_max_upload_bytes
 
 from .cover_art import (
     LIBRETRO_MATCH_THRESHOLD,
+    ScreenScraperGame,
     best_libretro_name,
+    download_image,
+    is_allowed_image_url,
+    redact_secrets,
+    scrape_cover_art,
     fetch_cover_for_rom,
     find_libretro,
     find_screenscraper,
@@ -130,10 +135,10 @@ BOTH_PROVIDERS = parse_cover_art_settings(BOTH_PROVIDERS_ENV)
 
 
 class FakeResponse:
-    def __init__(self, status_code=200, content=b"", content_type="image/png", json_data=None):
+    def __init__(self, status_code=200, content=b"", content_type="image/png", json_data=None, headers=None):
         self.status_code = status_code
         self.content = content
-        self.headers = {"Content-Type": content_type}
+        self.headers = {"Content-Type": content_type, **(headers or {})}
         self._json = json_data
 
     def __enter__(self):
@@ -349,7 +354,7 @@ class ProviderTests(SimpleTestCase):
 
 
 SS_JEU = {
-    "medias": [{"type": "box-2D", "region": "us", "url": "https://ss.example/box"}],
+    "medias": [{"type": "box-2D", "region": "us", "url": "https://media.screenscraper.fr/box"}],
     "synopsis": [
         {"langue": "fr", "text": "Une chasseuse de primes."},
         {"langue": "en", "text": "A bounty hunter explores planet Zebes."},
@@ -407,8 +412,8 @@ class ScreenScraperMetadataTests(APITestCase):
     def ss_http(self, jeu=SS_JEU):
         return fake_http(
             {
+                "media.screenscraper.fr/box": FakeResponse(content=b"\xff\xd8jpeg", content_type="image/jpeg"),
                 "screenscraper.fr": FakeResponse(json_data={"response": {"jeu": jeu}}, content_type="application/json"),
-                "ss.example/box": FakeResponse(content=b"\xff\xd8jpeg", content_type="image/jpeg"),
             }
         )
 
@@ -610,11 +615,13 @@ class CoverArtScrapeTests(APITestCase):
 
     @override_settings(COVER_ART=BOTH_PROVIDERS)
     def test_screenscraper_match_is_used_first(self):
-        payload = {"response": {"jeu": {"medias": [{"type": "box-2D", "region": "us", "url": "https://ss.example/box"}]}}}
+        payload = {
+            "response": {"jeu": {"medias": [{"type": "box-2D", "region": "us", "url": "https://media.screenscraper.fr/box"}]}}
+        }
         get = fake_http(
             {
+                "media.screenscraper.fr/box": FakeResponse(content=b"\xff\xd8jpeg", content_type="image/jpeg"),
                 "screenscraper.fr": FakeResponse(json_data=payload, content_type="application/json"),
-                "ss.example/box": FakeResponse(content=b"\xff\xd8jpeg", content_type="image/jpeg"),
             }
         )
         with mock.patch("apps.roms.cover_art.requests.get", get):
@@ -1200,3 +1207,164 @@ class ROMAdminTests(TestCase):
         self.assertEqual({call.args[0] for call in scrape.call_args_list}, {first.pk, second.pk})
         self.assertEqual(scrape.call_count, 2)
         self.assertContains(response, "Queued cover art scraping for 2 ROMs.")
+
+
+class ImageUrlAllowlistTests(SimpleTestCase):
+    """Cover images may only come from the providers' own HTTPS hosts (SSRF guard): the
+    ScreenScraper payload is third-party data and must not steer requests elsewhere."""
+
+    def test_provider_hosts_are_allowed(self):
+        for url in (
+            "https://thumbnails.libretro.com/NES/Named_Boxarts/Metroid.png",
+            "https://screenscraper.fr/image.php?x=1",
+            "https://www.screenscraper.fr/image.php",
+            "https://api.screenscraper.fr/api2/mediaJeu.php",
+        ):
+            with self.subTest(url=url):
+                self.assertTrue(is_allowed_image_url(url))
+
+    def test_everything_else_is_rejected(self):
+        for url in (
+            "http://thumbnails.libretro.com/x.png",  # not TLS
+            "http://169.254.169.254/latest/meta-data/",
+            "https://127.0.0.1/x.png",
+            "https://localhost:8000/api/roms/",
+            "https://evil.example/x.png",
+            "https://screenscraper.fr.evil.example/x.png",
+            "https://notscreenscraper.fr/x.png",
+            "https://screenscraper.fr@evil.example/x.png",
+            "https://user:pw@screenscraper.fr/x.png",
+            "https://screenscraper.fr:8443/x.png",
+            "file:///etc/passwd",
+            "ftp://screenscraper.fr/x.png",
+            "//screenscraper.fr/x.png",
+            "",
+        ):
+            with self.subTest(url=url):
+                self.assertFalse(is_allowed_image_url(url))
+
+    def test_download_refuses_a_disallowed_url_without_requesting_it(self):
+        with mock.patch("apps.roms.cover_art.requests.get") as get, self.assertLogs("apps.roms.cover_art", "WARNING"):
+            self.assertIsNone(download_image("http://169.254.169.254/latest/meta-data/", LIBRETRO_ONLY))
+        get.assert_not_called()
+
+    def test_download_follows_redirects_only_to_allowed_hosts(self):
+        start = "https://thumbnails.libretro.com/a.png"
+
+        def redirect(target):
+            return FakeResponse(status_code=302, content_type="text/html", headers={"Location": target})
+
+        get = fake_http(
+            {
+                "mirror.screenscraper.fr/b.png": FakeResponse(content=PNG_BYTES),
+                "thumbnails.libretro.com/a.png": redirect("https://mirror.screenscraper.fr/b.png"),
+            }
+        )
+        with mock.patch("apps.roms.cover_art.requests.get", get):
+            self.assertEqual(download_image(start, LIBRETRO_ONLY), (PNG_BYTES, ".png"))
+        self.assertFalse(get.call_args.kwargs["allow_redirects"])
+
+        get = fake_http({"thumbnails.libretro.com/a.png": redirect("http://127.0.0.1:8000/admin/")})
+        with mock.patch("apps.roms.cover_art.requests.get", get), self.assertLogs("apps.roms.cover_art", "WARNING"):
+            self.assertIsNone(download_image(start, LIBRETRO_ONLY))
+        self.assertEqual(get.call_count, 1)  # The internal target was never requested.
+
+    def test_redirect_loops_are_cut_off(self):
+        loop = FakeResponse(status_code=302, content_type="text/html", headers={"Location": "/a.png"})
+        get = fake_http({"thumbnails.libretro.com": loop})
+        with mock.patch("apps.roms.cover_art.requests.get", get):
+            self.assertIsNone(download_image("https://thumbnails.libretro.com/a.png", LIBRETRO_ONLY))
+        self.assertLessEqual(get.call_count, 5)
+
+
+class SecretRedactionTests(SimpleTestCase):
+    def test_redact_secrets_masks_credential_query_params(self):
+        text = (
+            "500 for url: https://api.screenscraper.fr/api2/jeuInfos.php"
+            "?devid=dev&devpassword=DEVSECRET1&ssid=me&sspassword=USERSECRET2&x=1"
+        )
+        redacted = redact_secrets(text)
+        for secret in ("DEVSECRET1", "USERSECRET2", "devid=dev&", "ssid=me"):
+            self.assertNotIn(secret, redacted)
+        self.assertIn("x=1", redacted)
+
+    def test_provider_failures_never_log_credentials(self):
+        url = "https://api.screenscraper.fr/api2/jeuInfos.php?devid=dev&devpassword=DEVSECRET1&ssid=me&sspassword=USERSECRET2"
+        get = fake_http({"screenscraper.fr": requests.ConnectionError(f"Max retries exceeded with url: {url}")})
+        with mock.patch("apps.roms.cover_art.requests.get", get), self.assertLogs(
+            "apps.roms.cover_art", "WARNING"
+        ) as logs:
+            self.assertIsNone(scrape_cover_art("Metroid", "NES", "metroid.nes", BOTH_PROVIDERS))
+        output = "\n".join(logs.output)
+        self.assertNotIn("DEVSECRET1", output)
+        self.assertNotIn("USERSECRET2", output)
+
+    def test_screenscraper_lookup_failures_never_log_credentials(self):
+        url = "https://api.screenscraper.fr/api2/jeuInfos.php?devpassword=DEVSECRET1&sspassword=USERSECRET2"
+        get = fake_http({"screenscraper.fr": requests.ConnectionError(url)})
+        config = parse_cover_art_settings({**BOTH_PROVIDERS_ENV, "COVER_ART_PROVIDERS": "screenscraper"})
+        with mock.patch("apps.roms.cover_art.requests.get", get), self.assertLogs(
+            "apps.roms.cover_art", "WARNING"
+        ) as logs:
+            self.assertIsNone(ScreenScraperGame("Metroid", "NES", "metroid.nes", config).jeu)
+        output = "\n".join(logs.output)
+        self.assertNotIn("DEVSECRET1", output)
+        self.assertNotIn("USERSECRET2", output)
+
+
+class MediaAccessControlTests(APITestCase):
+    """ROM files and cover art are private: only authenticated users with a role may fetch them."""
+
+    def setUp(self):
+        self.admin = make_user("admin", "super_admin")
+        self.rom = ROM.objects.create(title="Zelda", file=dummy_rom("zelda.nes"), uploaded_by=self.admin)
+        self.rom.cover_art.save("rom-1.png", ContentFile(PNG_BYTES), save=True)
+
+    def test_anonymous_and_roleless_users_cannot_fetch_files_or_covers(self):
+        for name in ("rom-download", "rom-cover", "rom-detail"):
+            url = reverse(name, args=[self.rom.pk])
+            with self.subTest(name=name, who="anonymous"):
+                self.assertIn(self.client.get(url).status_code, (401, 403))
+        self.client.force_authenticate(make_user("nobody"))
+        for name in ("rom-download", "rom-cover", "rom-detail"):
+            with self.subTest(name=name, who="roleless"):
+                self.assertEqual(self.client.get(reverse(name, args=[self.rom.pk])).status_code, 403)
+
+    def test_readonly_users_cannot_write_or_scrape(self):
+        self.client.force_authenticate(make_user("reader", "readonly"))
+        self.assertEqual(self.client.post(reverse("rom-scrape-cover", args=[self.rom.pk])).status_code, 403)
+        self.assertEqual(self.client.delete(reverse("rom-detail", args=[self.rom.pk])).status_code, 403)
+        upload = self.client.post(reverse("rom-list"), {"title": "x", "file": dummy_rom("x.nes")}, format="multipart")
+        self.assertEqual(upload.status_code, 403)
+
+    def test_cover_is_served_as_an_image_with_nosniff(self):
+        self.client.force_authenticate(make_user("reader", "readonly"))
+        response = self.client.get(reverse("rom-cover", args=[self.rom.pk]))
+        self.assertEqual(response["Content-Type"], "image/png")
+        self.assertEqual(response["X-Content-Type-Options"], "nosniff")
+
+
+class HostileInputTests(APITestCase):
+    def setUp(self):
+        self.admin = make_user("admin", "super_admin")
+        self.client.force_authenticate(self.admin)
+
+    def test_upload_filename_cannot_escape_the_roms_directory(self):
+        for name in ("../../evil.nes", "/etc/cron.d/evil.nes", "..\\..\\evil.nes"):
+            with self.subTest(name=name):
+                response = self.client.post(
+                    reverse("rom-list"), {"title": "x", "file": dummy_rom(name)}, format="multipart"
+                )
+                self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+                stored = ROM.objects.latest("id").file.name
+                self.assertTrue(stored.startswith("roms/"), stored)
+                self.assertNotIn("..", stored)
+                self.assertNotIn("//", stored)
+
+    def test_download_filename_drops_control_characters(self):
+        rom = ROM.objects.create(title="Evil\r\nSet-Cookie: x=1", file=dummy_rom("a.nes"), uploaded_by=self.admin)
+        response = self.client.get(reverse("rom-download", args=[rom.pk]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        for value in response.headers.values():
+            self.assertNotIn("\n", value)
+            self.assertNotIn("\r", value)
