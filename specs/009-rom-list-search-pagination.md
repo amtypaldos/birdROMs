@@ -1,6 +1,6 @@
 # 009 — ROM list pagination, search & platform filter
 
-## Status: DRAFT
+## Status: COMPLETE
 Priority: 9
 
 ## Problem / Context
@@ -20,14 +20,14 @@ platform filtering, and wire the frontend to use them.
 
 ## Completion Signal
 Implementation:
-- [ ] Pagination + `search` + `platform` filters; combinable.
-- [ ] Distinct-platforms endpoint.
-- [ ] Frontend search/filter/pagination UI.
+- [x] Pagination + `search` + `platform` filters; combinable.
+- [x] Distinct-platforms endpoint.
+- [x] Frontend search/filter/pagination UI.
 
 Testing:
-- [ ] Backend tests: envelope shape; search narrows; platform filter works.
-- [ ] `uv run python manage.py test`, `yarn test`, `yarn lint`, `yarn build` pass.
+- [x] Backend tests: envelope shape; search narrows; platform filter works.
+- [x] `uv run python manage.py test`, `yarn test`, `yarn lint`, `yarn build` pass.
 
 Commit and push. Output `<promise>DONE</promise>` only when all boxes are verified.
 
-<!-- NR_OF_TRIES: 0 -->
+<!-- NR_OF_TRIES: 1 -->

@@ -1,6 +1,6 @@
 # 001 — Backend test harness + auth & ROM API tests
 
-## Status: DRAFT
+## Status: COMPLETE
 Priority: 1 (highest)
 
 ## Problem / Context
@@ -31,16 +31,16 @@ Relevant code: `backend/birdroms/settings.py`, `backend/apps/accounts/`, `backen
 
 ## Completion Signal
 Implementation:
-- [ ] Test DB configured so tests run without Postgres.
-- [ ] Accounts tests written (register/login happy + error paths).
-- [ ] ROMs tests written (permission matrix + create + scrape_cover).
-- [ ] README documents how to run backend tests.
+- [x] Test DB configured so tests run without Postgres.
+- [x] Accounts tests written (register/login happy + error paths).
+- [x] ROMs tests written (permission matrix + create + scrape_cover).
+- [x] README documents how to run backend tests.
 
 Testing:
-- [ ] `uv run python manage.py test` passes with 0 failures/errors from a clean checkout
+- [x] `uv run python manage.py test` passes with 0 failures/errors from a clean checkout
       (no Postgres running).
-- [ ] New tests actually assert the behaviors above (not empty/placeholder).
+- [x] New tests actually assert the behaviors above (not empty/placeholder).
 
 Commit and push. Output `<promise>DONE</promise>` only when all boxes are verified.
 
-<!-- NR_OF_TRIES: 0 -->
+<!-- NR_OF_TRIES: 1 -->

@@ -13,18 +13,30 @@ venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
+build/
+*.egg
 # Local media uploads (ROMs, cover art)
-backend/media/
+media/
+# collectstatic output (Django admin assets)
+staticfiles/
 
 # --- Node / Vite (frontend) ---
 node_modules/
 dist/
+coverage/
 .yarn/
 .pnp.*
 *.log
 
 # --- Ralph runtime output ---
 logs/
+PROMPT_build.md
+PROMPT_plan.md
+
+# --- Internal working docs (not for the public repo) ---
+CLEANUP.md
 
 # --- direnv (holds a personal config-dir path and/or token) ---
 .envrc

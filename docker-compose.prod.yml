@@ -1,0 +1,66 @@
+# birdROMs production stack: PostgreSQL + Django (gunicorn) + nginx (SPA + reverse proxy).
+#
+#   cp backend/.env.example backend/.env   # then edit it — see SELF_HOSTING.md
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# All configuration comes from backend/.env (shared by the postgres and backend services;
+# set BIRDROMS_ENV_FILE to use a file elsewhere); nothing is baked into the images. Only the web service is published, on
+# ${BIRDROMS_HTTP_PORT:-8080}; put your TLS-terminating proxy (Caddy, Traefik, nginx, ...)
+# in front of it, or publish it directly on a trusted network.
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    env_file:
+      - path: ${BIRDROMS_ENV_FILE:-./backend/.env}
+        required: false
+    volumes:
+      - birdroms_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      target: prod
+    image: ${BIRDROMS_BACKEND_IMAGE:-birdroms-backend:latest}
+    restart: unless-stopped
+    env_file:
+      - path: ${BIRDROMS_ENV_FILE:-./backend/.env}
+        required: false
+    environment:
+      # Fixed by this compose file's topology; everything else comes from backend/.env.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      MEDIA_ROOT: /data/media
+    volumes:
+      # Filesystem storage. To use NFS, replace this with a bind mount of the NFS share
+      # (e.g. /mnt/roms:/data/media) or an NFS-backed named volume.
+      - birdroms_media:/data/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./frontend
+      target: prod
+    image: ${BIRDROMS_WEB_IMAGE:-birdroms-web:latest}
+    restart: unless-stopped
+    environment:
+      BACKEND_UPSTREAM: backend:8000
+      # Must be at least MAX_ROM_UPLOAD_BYTES (nginx size syntax, e.g. 2g, 8g).
+      NGINX_CLIENT_MAX_BODY_SIZE: ${NGINX_CLIENT_MAX_BODY_SIZE:-2g}
+    ports:
+      - "${BIRDROMS_HTTP_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  birdroms_pgdata:
+  birdroms_media:

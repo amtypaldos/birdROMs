@@ -1,6 +1,6 @@
 # 003 — FOSS licensing & project hygiene
 
-## Status: DRAFT
+## Status: COMPLETE
 Priority: 3
 
 ## Problem / Context
@@ -26,15 +26,15 @@ open-source baseline.
 
 ## Completion Signal
 Implementation:
-- [ ] LICENSE added; README License + self-hosting section added.
-- [ ] CONTRIBUTING.md added.
-- [ ] .gitignore complete; `.env` untracked; `.env.example` present.
+- [x] LICENSE added; README License + self-hosting section added.
+- [x] CONTRIBUTING.md added.
+- [x] .gitignore complete; `.env` untracked; `.env.example` present.
 
 Testing:
-- [ ] `git check-ignore backend/.env` returns the path (ignored).
-- [ ] `git ls-files | grep -E '(^|/)\.env$'` returns nothing.
-- [ ] Backend + frontend test suites still pass.
+- [x] `git check-ignore backend/.env` returns the path (ignored).
+- [x] `git ls-files | grep -E '(^|/)\.env$'` returns nothing.
+- [x] Backend + frontend test suites still pass.
 
 Commit and push. Output `<promise>DONE</promise>` only when all boxes are verified.
 
-<!-- NR_OF_TRIES: 0 -->
+<!-- NR_OF_TRIES: 1 -->
