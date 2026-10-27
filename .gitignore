@@ -48,3 +48,4 @@ CLEANUP.md
 *.swp
 .idea/
 .vscode/
+.claude/
