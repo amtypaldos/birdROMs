@@ -1,7 +1,10 @@
 from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase
 
+from huey import MemoryHuey, RedisHuey
+
 from birdroms.deploy_config import check_secret_key, parse_csv, parse_proxy_settings
+from birdroms.huey_config import build_huey
 
 
 class SecretKeyCheckTests(SimpleTestCase):
@@ -51,3 +54,49 @@ class ProxySettingsTests(SimpleTestCase):
     def test_invalid_bool_fails_fast(self):
         with self.assertRaises(ImproperlyConfigured):
             parse_proxy_settings({"DJANGO_BEHIND_HTTPS_PROXY": "maybe"})
+
+
+class HueyConfigTests(SimpleTestCase):
+    def test_huey_immediate_in_debug(self):
+        huey = build_huey({}, debug=True)
+        self.assertIsInstance(huey, MemoryHuey)
+        self.assertTrue(huey.immediate)
+
+    def test_huey_immediate_when_flag_set_outside_debug(self):
+        huey = build_huey({"HUEY_IMMEDIATE": "true", "REDIS_URL": "redis://cache:6379/1"}, debug=False)
+        self.assertTrue(huey.immediate)
+
+    def test_redis_backend_selected_when_not_immediate(self):
+        env = {"HUEY_IMMEDIATE": "false", "REDIS_URL": "redis://cache.example:6380/2"}
+        huey = build_huey(env, debug=False)
+        self.assertIsInstance(huey, RedisHuey)
+        self.assertFalse(huey.immediate)
+        params = huey.storage.pool.connection_kwargs
+        self.assertEqual((params["host"], params["port"], params["db"]), ("cache.example", 6380, 2))
+
+    def test_redis_url_defaults_to_localhost(self):
+        huey = build_huey({"HUEY_IMMEDIATE": "false"}, debug=False)
+        self.assertEqual(huey.storage.pool.connection_kwargs["host"], "localhost")
+
+    def test_invalid_immediate_flag_fails_fast(self):
+        with self.assertRaises(ImproperlyConfigured):
+            build_huey({"HUEY_IMMEDIATE": "maybe"}, debug=False)
+
+
+class HueyWrapperTests(SimpleTestCase):
+    def test_wrapper_exposes_the_configured_instance(self):
+        from django.conf import settings
+
+        from birdroms import tasks
+
+        self.assertIs(tasks.huey, settings.HUEY)
+        self.assertTrue(tasks.huey.immediate)  # the test run never needs a live Redis
+
+    def test_task_decorator_runs_inline_in_immediate_mode(self):
+        from birdroms.tasks import task
+
+        @task()
+        def add(a, b):
+            return a + b
+
+        self.assertEqual(add(2, 3)(), 5)
