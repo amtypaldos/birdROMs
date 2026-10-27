@@ -145,6 +145,9 @@ Roles are implemented as user groups:
 - `super_admin`: create/edit/delete ROMs, upload files, scrape cover art
 - `readonly`: list ROMs and download files
 
+Uploading a ROM is currently open to any authenticated user (RBAC is deferred; see
+`backend/apps/roms/permissions.py` to re-tighten). Editing, deleting and re-scraping stay `super_admin`-only.
+
 Use Django admin to assign roles to local users. SSO users get their role from the provider
 (see below).
 
