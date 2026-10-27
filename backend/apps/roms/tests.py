@@ -1586,6 +1586,13 @@ class PlaylistTests(APITestCase):
         self.assertEqual(duplicate.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(Playlist.objects.count(), 0)
 
+    def test_create_rejects_an_overlong_rom_ids_list(self):
+        self.client.force_authenticate(self.other)
+        response = self.client.post(self.list_url, {"name": "x", "rom_ids": list(range(1, 502))}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("rom_ids", response.data)
+        self.assertEqual(Playlist.objects.count(), 0)
+
     def test_create_requires_a_name(self):
         self.client.force_authenticate(self.other)
         response = self.client.post(self.list_url, {"name": ""}, format="json")
@@ -1601,6 +1608,18 @@ class PlaylistTests(APITestCase):
         self.assertEqual([p["name"] for p in response.data], ["Road trip"])
         self.assertEqual(response.data[0]["rom_count"], 2)
 
+    def test_playlist_list_is_lightweight(self):
+        # The list is unpaginated, so it must not carry every ROM of every playlist.
+        self.make_playlist(self.rom_a, self.rom_b)
+        self.client.force_authenticate(self.other)
+
+        response = self.client.get(self.list_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(set(response.data[0]), {"id", "name", "created_by", "created_at", "rom_count"})
+        self.assertEqual(response.data[0]["rom_count"], 2)
+        self.assertNotIn("roms", response.data[0])
+
     def test_playlist_detail_returns_ordered_roms(self):
         # Insert out of id order so ordering can only come from `order`.
         playlist = self.make_playlist(self.rom_c, self.rom_a, self.rom_b)
@@ -1610,7 +1629,27 @@ class PlaylistTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual([rom["id"] for rom in response.data["roms"]], [self.rom_c.pk, self.rom_a.pk, self.rom_b.pk])
-        self.assertIn("download_url", response.data["roms"][0])
+
+    def test_playlist_detail_roms_have_size_bytes(self):
+        covered = ROM.objects.create(
+            title="D", file=dummy_rom("d.nes"), uploaded_by=self.owner, cover_art=ContentFile(b"png", name="d.png")
+        )
+        playlist = self.make_playlist(covered, self.rom_a)
+        self.client.force_authenticate(self.other)
+
+        response = self.client.get(reverse("playlist-detail", args=[playlist.pk]))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        first, second = response.data["roms"]
+        self.assertEqual([first["id"], second["id"]], [covered.pk, self.rom_a.pk])
+        device_shape = {"id", "title", "platform", "extension", "size_bytes", "cover_url"}
+        self.assertEqual(set(first), device_shape)
+        self.assertEqual(set(second), device_shape)
+        self.assertEqual(first["size_bytes"], 16)
+        self.assertTrue(first["cover_url"].endswith(f"/api/roms/{covered.pk}/cover/"))
+        self.assertIsNone(second["cover_url"])
+        # Heavy full-ROM fields are gone; the device downloads via the ROM endpoint by id.
+        self.assertNotIn("download_url", first)
 
     def test_non_owner_cannot_edit_others_playlist(self):
         playlist = self.make_playlist(self.rom_a)

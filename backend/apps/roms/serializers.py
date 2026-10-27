@@ -91,7 +91,27 @@ class DeviceROMSerializer(serializers.ModelSerializer):
         return request.build_absolute_uri(path) if request else path
 
 
+# Upper bound on a playlist's size in one write; keeps the id lookup and the response bounded.
+MAX_PLAYLIST_ROMS = 500
+
+
+class PlaylistListSerializer(serializers.ModelSerializer):
+    """Lightweight row for the (unpaginated) playlist list: no ROMs, just a count.
+
+    `rom_count` comes from the viewset's annotation, so listing never loads the items.
+    """
+
+    rom_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Playlist
+        fields = ["id", "name", "created_by", "created_at", "rom_count"]
+        read_only_fields = fields
+
+
 class PlaylistSerializer(serializers.ModelSerializer):
+    """Detail and write shape. ROMs use the compact device shape; fetch a ROM by id for the rest."""
+
     created_by_username = serializers.CharField(source="created_by.username", read_only=True)
     rom_count = serializers.SerializerMethodField()
     # Read: the playlist's ROMs, in playlist order. Write: `rom_ids` (below) replaces them.
@@ -99,7 +119,7 @@ class PlaylistSerializer(serializers.ModelSerializer):
     # Add, remove and reorder in one call: the list is the playlist's new order. Omit to leave
     # the items untouched.
     rom_ids = serializers.ListField(
-        child=serializers.PrimaryKeyRelatedField(queryset=ROM.objects.all()), write_only=True, required=False
+        child=serializers.IntegerField(), max_length=MAX_PLAYLIST_ROMS, write_only=True, required=False
     )
 
     class Meta:
@@ -113,12 +133,16 @@ class PlaylistSerializer(serializers.ModelSerializer):
     def get_roms(self, obj):
         # `items` is prefetched (with `rom`) by the viewset and ordered by `PlaylistItem.Meta`.
         roms = [item.rom for item in obj.items.all()]
-        return ROMSerializer(roms, many=True, context=self.context).data
+        return DeviceROMSerializer(roms, many=True, context=self.context).data
 
-    def validate_rom_ids(self, roms):
-        if len({rom.pk for rom in roms}) != len(roms):
+    def validate_rom_ids(self, rom_ids):
+        if len(set(rom_ids)) != len(rom_ids):
             raise serializers.ValidationError("A ROM can only appear once in a playlist.")
-        return roms
+        found = ROM.objects.in_bulk(rom_ids)  # One query for the whole list.
+        missing = [pk for pk in rom_ids if pk not in found]
+        if missing:
+            raise serializers.ValidationError(f"Unknown ROM id(s): {', '.join(map(str, missing))}.")
+        return [found[pk] for pk in rom_ids]
 
     @transaction.atomic
     def create(self, validated_data):

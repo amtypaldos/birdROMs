@@ -4,9 +4,10 @@ from urllib.parse import parse_qs, urlparse
 
 from django.conf import settings
 from django.contrib import admin
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Group, User
 from django.core.cache import cache
 from django.core.exceptions import ImproperlyConfigured
+from django.core.files.base import ContentFile
 from django.http import HttpResponseRedirect
 from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
@@ -19,6 +20,7 @@ from rest_framework.test import APITestCase
 
 from apps.accounts.models import PAIRING_CODE_ALPHABET, DeviceToken, OIDCIdentity, PairingRequest, hash_device_token
 from apps.accounts.services import expire_stale_pairings, set_role, user_role
+from apps.roms.models import ROM, Playlist
 from birdroms.auth_config import parse_allow_local_login, parse_auth_methods, parse_oidc_settings
 from birdroms.tasks import sweep_expired_pairings
 
@@ -695,6 +697,64 @@ class DevicePairingTests(APITestCase):
         DeviceToken.objects.update(revoked=True)
         revoked = self.client.get(me_url, HTTP_AUTHORIZATION=f"Device {raw}")
         self.assertEqual(revoked.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_device_token_cannot_write(self):
+        # The handheld is browse/download-only: even a super_admin's paired device can't mutate.
+        group, _ = Group.objects.get_or_create(name="super_admin")
+        self.user.groups.add(group)
+        rom = ROM.objects.create(title="Zelda", file=ContentFile(b"x" * 16, name="zelda.nes"), uploaded_by=self.user)
+        playlist = Playlist.objects.create(name="Mine", created_by=self.user)
+        raw = self._pair_device()
+        auth = {"HTTP_AUTHORIZATION": f"Device {raw}"}
+
+        attempts = [
+            ("post", reverse("rom-list"), {"title": "New"}),
+            ("patch", reverse("rom-detail", args=[rom.pk]), {"title": "Renamed"}),
+            ("delete", reverse("rom-detail", args=[rom.pk]), None),
+            ("post", reverse("rom-scrape-cover", args=[rom.pk]), None),
+            ("post", reverse("playlist-list"), {"name": "New"}),
+            ("patch", reverse("playlist-detail", args=[playlist.pk]), {"name": "Renamed"}),
+            ("delete", reverse("playlist-detail", args=[playlist.pk]), None),
+        ]
+        for method, url, body in attempts:
+            with self.subTest(method=method, url=url):
+                response = getattr(self.client, method)(url, body, format="json", **auth)
+                self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+        rom.refresh_from_db()
+        playlist.refresh_from_db()
+        self.assertEqual(rom.title, "Zelda")
+        self.assertEqual(playlist.name, "Mine")
+
+        # The same user's regular API token is unaffected, so the restriction is the device's.
+        regular = self.client.patch(
+            reverse("playlist-detail", args=[playlist.pk]),
+            {"name": "Renamed"},
+            format="json",
+            HTTP_AUTHORIZATION=f"Token {self.api_token.key}",
+        )
+        self.assertEqual(regular.status_code, status.HTTP_200_OK)
+
+    def test_device_token_can_still_read(self):
+        group, _ = Group.objects.get_or_create(name="readonly")
+        self.user.groups.add(group)
+        rom = ROM.objects.create(title="Zelda", file=ContentFile(b"x" * 16, name="zelda.nes"), uploaded_by=self.user)
+        playlist = Playlist.objects.create(name="Mine", created_by=self.user)
+        raw = self._pair_device()
+        auth = {"HTTP_AUTHORIZATION": f"Device {raw}"}
+
+        for url in (
+            reverse("me"),
+            reverse("rom-list"),
+            reverse("rom-detail", args=[rom.pk]),
+            reverse("rom-download", args=[rom.pk]),
+            reverse("playlist-list"),
+            reverse("playlist-detail", args=[playlist.pk]),
+        ):
+            with self.subTest(url=url):
+                response = self.client.get(url, **auth)
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.options(reverse("rom-list"), **auth).status_code, status.HTTP_200_OK)
 
     def test_device_token_auth_rejects_garbage_and_inactive_users(self):
         me_url = reverse("me")
