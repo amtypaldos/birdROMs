@@ -7,11 +7,13 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from birdroms.tasks import scrape_rom_cover
+
 from .models import ROM
 from .pagination import ROMPagination
 from .permissions import IsSuperAdminOrReadOnlyRole
 from .serializers import ROMSerializer
-from .cover_art import fetch_cover_for_rom, safe_fetch_cover_for_rom
+from .cover_art import fetch_cover_for_rom
 
 
 def download_filename(rom):
@@ -46,8 +48,9 @@ class ROMViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         rom = serializer.save(uploaded_by=self.request.user)
-        # The upload has already succeeded; a scrape failure is logged, never surfaced.
-        safe_fetch_cover_for_rom(rom)
+        # The upload has already succeeded; the scrape runs in the background and a failure
+        # there is logged, never surfaced.
+        scrape_rom_cover(rom.id)
 
     @action(detail=False, methods=["get"])
     def platforms(self, request):
