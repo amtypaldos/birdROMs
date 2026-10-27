@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 function page(results, { count = results.length, next = null, previous = null } = {}) {
   return { count, next, previous, results };
@@ -20,11 +20,12 @@ vi.mock("./api/client", () => ({
     createRom: vi.fn(),
     scrapeCover: vi.fn(),
     downloadRom: vi.fn(() => Promise.resolve()),
-    coverObjectUrl: vi.fn(() => Promise.resolve("blob:cover"))
+    coverObjectUrl: vi.fn(() => Promise.resolve("blob:cover")),
+    coverExists: vi.fn(() => Promise.resolve(false))
   }
 }));
 
-import App, { platformFamily } from "./App";
+import App, { COVER_POLL_INTERVAL_MS, COVER_POLL_MAX_ATTEMPTS, platformFamily } from "./App";
 import { api, consumeOidcFragment, getToken, setToken } from "./api/client";
 
 describe("App", () => {
@@ -64,7 +65,7 @@ describe("App", () => {
     expect(await screen.findByRole("img", { name: "Zelda" })).toHaveAttribute("src", "blob:cover");
     expect(screen.queryByRole("img", { name: "Metroid" })).not.toBeInTheDocument();
     expect(api.coverObjectUrl).toHaveBeenCalledTimes(1);
-    expect(api.coverObjectUrl).toHaveBeenCalledWith(withArt);
+    expect(api.coverObjectUrl).toHaveBeenCalledWith(expect.objectContaining({ id: 3 }));
     unmount();
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:cover");
     vi.unstubAllGlobals();
@@ -291,5 +292,209 @@ describe("App", () => {
     expect(platformFamily("Atari Lynx")).toBe("atari");
     expect(platformFamily("WonderSwan")).toBe("other");
     expect(platformFamily(undefined)).toBe("other");
+  });
+});
+
+describe("global drag-and-drop upload", () => {
+  function romFile(name) {
+    return new File(["data"], name, { type: "application/octet-stream" });
+  }
+
+  function dragData(files) {
+    return { dataTransfer: { files, types: ["Files"] } };
+  }
+
+  async function renderAs(role) {
+    getToken.mockReturnValue("tok");
+    api.me.mockResolvedValue({ id: 2, username: "root", email: "", role });
+    api.listRoms.mockResolvedValue(page([]));
+    render(<App />);
+    await screen.findByText("No ROMs found.");
+    await screen.findByText(role);
+  }
+
+  it("test_dropzone_super_admin_only", async () => {
+    api.createRom.mockResolvedValue({});
+    await renderAs("readonly");
+
+    fireEvent.dragEnter(document.body, dragData([romFile("a.nes")]));
+    expect(screen.queryByText("Drop ROM files to upload")).not.toBeInTheDocument();
+    fireEvent.drop(document.body, dragData([romFile("a.nes")]));
+    expect(api.createRom).not.toHaveBeenCalled();
+    cleanup();
+
+    await renderAs("super_admin");
+    fireEvent.dragEnter(document.body, dragData([romFile("a.nes")]));
+    expect(await screen.findByText("Drop ROM files to upload")).toBeInTheDocument();
+    fireEvent.dragLeave(document.body, dragData([romFile("a.nes")]));
+    expect(screen.queryByText("Drop ROM files to upload")).not.toBeInTheDocument();
+  });
+
+  it("test_multi_drop_uploads_each", async () => {
+    api.createRom.mockResolvedValue({});
+    await renderAs("super_admin");
+    const callsBefore = api.listRoms.mock.calls.length;
+
+    fireEvent.dragEnter(document.body, dragData([romFile("a.nes")]));
+    fireEvent.drop(document.body, dragData([romFile("a.nes"), romFile("b.sfc"), romFile("c.gba")]));
+
+    await waitFor(() => expect(api.createRom).toHaveBeenCalledTimes(3));
+    const titles = api.createRom.mock.calls.map(([formData]) => formData.get("title"));
+    expect(titles).toEqual(["a.nes", "b.sfc", "c.gba"]);
+    expect(api.createRom.mock.calls[0][0].get("file").name).toBe("a.nes");
+    await waitFor(() => expect(screen.getAllByText("Uploaded")).toHaveLength(3));
+    expect(screen.queryByText("Drop ROM files to upload")).not.toBeInTheDocument();
+    await waitFor(() => expect(api.listRoms.mock.calls.length).toBeGreaterThan(callsBefore));
+  });
+
+  it("uploads one file at a time", async () => {
+    let active = 0;
+    let peak = 0;
+    api.createRom.mockImplementation(async () => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return {};
+    });
+    await renderAs("super_admin");
+
+    fireEvent.drop(document.body, dragData([romFile("a.nes"), romFile("b.sfc"), romFile("c.gba")]));
+
+    await waitFor(() => expect(screen.getAllByText("Uploaded")).toHaveLength(3));
+    expect(peak).toBe(1);
+  });
+
+  it("test_one_bad_file_does_not_abort_rest", async () => {
+    api.createRom
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error("Unsupported ROM type"))
+      .mockResolvedValueOnce({});
+    await renderAs("super_admin");
+
+    fireEvent.drop(document.body, dragData([romFile("a.nes"), romFile("bad.txt"), romFile("c.gba")]));
+
+    await waitFor(() => expect(api.createRom).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(screen.getAllByText("Uploaded")).toHaveLength(2));
+    const failed = await screen.findByText(/Unsupported ROM type/);
+    expect(failed.closest("li")).toHaveTextContent("bad.txt");
+    expect(failed).toHaveAttribute("role", "alert");
+  });
+
+  it("ignores drags that carry no files", async () => {
+    await renderAs("super_admin");
+
+    fireEvent.dragEnter(document.body, { dataTransfer: { files: [], types: ["text/plain"] } });
+
+    expect(screen.queryByText("Drop ROM files to upload")).not.toBeInTheDocument();
+  });
+
+  it("removes its window listeners on unmount", async () => {
+    getToken.mockReturnValue("tok");
+    api.me.mockResolvedValue({ id: 2, username: "root", email: "", role: "super_admin" });
+    api.listRoms.mockResolvedValue(page([]));
+    const add = vi.spyOn(window, "addEventListener");
+    const remove = vi.spyOn(window, "removeEventListener");
+
+    const { unmount } = render(<App />);
+    await screen.findByText("super_admin");
+    const added = add.mock.calls.filter(([type]) => /^drag|^drop/.test(type));
+    expect(added.length).toBeGreaterThan(0);
+    unmount();
+
+    for (const [type, handler] of added) {
+      expect(remove).toHaveBeenCalledWith(type, handler);
+    }
+  });
+});
+
+describe("cover polling", () => {
+  const fresh = { id: 9, title: "Fresh", platform: "NES", extension: ".nes", cover_art_url: null };
+
+  async function advance(ms) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  }
+
+  async function renderFresh() {
+    getToken.mockReturnValue("tok");
+    api.me.mockResolvedValue({ id: 1, username: "alice", email: "", role: "readonly" });
+    api.listRoms.mockResolvedValue(page([fresh]));
+    api.coverObjectUrl.mockResolvedValue("blob:cover");
+    vi.stubGlobal("URL", { revokeObjectURL: vi.fn() }); // jsdom has no object URLs
+    const view = render(<App />);
+    await advance(0); // let auth + the first list load settle
+    return view;
+  }
+
+  afterEach(() => {
+    cleanup(); // unmount while URL is still stubbed
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("test_card_polls_then_shows_cover", async () => {
+    vi.useFakeTimers();
+    api.coverExists.mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true);
+    await renderFresh();
+
+    expect(screen.queryByRole("img", { name: "Fresh" })).not.toBeInTheDocument();
+    expect(api.coverExists).not.toHaveBeenCalled();
+
+    await advance(COVER_POLL_INTERVAL_MS);
+    expect(api.coverExists).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("img", { name: "Fresh" })).not.toBeInTheDocument();
+
+    await advance(COVER_POLL_INTERVAL_MS);
+    expect(api.coverExists).toHaveBeenCalledTimes(2);
+
+    await advance(COVER_POLL_INTERVAL_MS);
+    expect(api.coverExists).toHaveBeenCalledTimes(3);
+    expect(api.coverObjectUrl).toHaveBeenCalledWith(expect.objectContaining({ id: 9 }));
+    expect(screen.getByRole("img", { name: "Fresh" })).toHaveAttribute("src", "blob:cover");
+
+    // Art arrived: polling has stopped for good.
+    await advance(COVER_POLL_INTERVAL_MS * (COVER_POLL_MAX_ATTEMPTS + 5));
+    expect(api.coverExists).toHaveBeenCalledTimes(3);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("test_poll_gives_up_after_limit", async () => {
+    vi.useFakeTimers();
+    api.coverExists.mockResolvedValue(false);
+    await renderFresh();
+
+    await advance(COVER_POLL_INTERVAL_MS * (COVER_POLL_MAX_ATTEMPTS + 20));
+
+    expect(api.coverExists).toHaveBeenCalledTimes(COVER_POLL_MAX_ATTEMPTS);
+    expect(api.coverObjectUrl).not.toHaveBeenCalled();
+    expect(screen.queryByRole("img", { name: "Fresh" })).not.toBeInTheDocument();
+    expect(document.querySelector(".cover-placeholder")).toBeInTheDocument();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps polling through transient check errors", async () => {
+    vi.useFakeTimers();
+    api.coverExists.mockRejectedValueOnce(new Error("boom")).mockResolvedValue(true);
+    await renderFresh();
+
+    await advance(COVER_POLL_INTERVAL_MS * 2);
+
+    expect(screen.getByRole("img", { name: "Fresh" })).toBeInTheDocument();
+  });
+
+  it("stops polling when the card unmounts", async () => {
+    vi.useFakeTimers();
+    api.coverExists.mockResolvedValue(false);
+    const { unmount } = await renderFresh();
+    await advance(COVER_POLL_INTERVAL_MS);
+    expect(api.coverExists).toHaveBeenCalledTimes(1);
+
+    unmount();
+    await advance(COVER_POLL_INTERVAL_MS * COVER_POLL_MAX_ATTEMPTS);
+
+    expect(api.coverExists).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

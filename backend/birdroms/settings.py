@@ -10,7 +10,8 @@ from dotenv import load_dotenv
 from apps.roms.cover_art import parse_cover_art_settings
 
 from .auth_config import parse_allow_local_login, parse_auth_methods, parse_oidc_settings
-from .deploy_config import check_secret_key, parse_csv, parse_proxy_settings
+from .deploy_config import check_secret_key, parse_csv, parse_debug, parse_num_proxies, parse_proxy_settings
+from .huey_config import build_huey
 from .storage import build_storages
 from .uploads import parse_max_upload_bytes
 
@@ -19,7 +20,8 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "unsafe-dev-secret-key")
-DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() == "true"
+# Fails closed: debug is off unless DJANGO_DEBUG=True (set in the .env copied from .env.example).
+DEBUG = parse_debug(os.environ)
 ALLOWED_HOSTS = parse_csv(os.environ, "DJANGO_ALLOWED_HOSTS") or ["localhost"]
 
 # Reverse-proxy / HTTPS settings (CSRF_TRUSTED_ORIGINS, SECURE_PROXY_SSL_HEADER, secure
@@ -39,6 +41,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "rest_framework",
     "rest_framework.authtoken",
+    "huey.contrib.djhuey",
     "apps.accounts",
     "apps.roms",
 ]
@@ -113,6 +116,10 @@ MAX_ROM_UPLOAD_BYTES = parse_max_upload_bytes(os.environ)
 # see apps/roms/cover_art.py and .env.example.
 COVER_ART = parse_cover_art_settings(os.environ)
 
+# Background-task queue: runs tasks inline under DEBUG / HUEY_IMMEDIATE=true, else on Redis
+# (REDIS_URL) via `manage.py run_huey`; see birdroms/huey_config.py and .env.example.
+HUEY = build_huey(os.environ, DEBUG)
+
 # Enabled login methods (`local`, `oidc`); see birdroms/auth_config.py and .env.example.
 AUTH_METHODS = parse_auth_methods(os.environ)
 # Local username/password login is always on when this is true (defaults to DEBUG).
@@ -120,11 +127,11 @@ ALLOW_LOCAL_LOGIN = parse_allow_local_login(os.environ, DEBUG)
 # Single OIDC/SSO provider (Pocket ID, Authentik, Keycloak, Authelia, Google, ...).
 OIDC = parse_oidc_settings(os.environ, AUTH_METHODS)
 
-# `manage.py test` runs against in-memory SQLite and a throwaway media dir so the
-# suite needs no running PostgreSQL and never writes into the real MEDIA_ROOT.
+# `manage.py test` runs on the same PostgreSQL config as above (Django creates a
+# `test_<POSTGRES_DB>` database) and uses a throwaway media dir so it never writes
+# into the real MEDIA_ROOT.
 TESTING = len(sys.argv) > 1 and sys.argv[1] == "test"
 if TESTING:
-    DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}}
     MEDIA_ROOT = Path(tempfile.mkdtemp(prefix="birdroms-test-media-"))
     STORAGES = build_storages({})
     atexit.register(shutil.rmtree, MEDIA_ROOT, ignore_errors=True)
@@ -134,11 +141,18 @@ if TESTING:
     OIDC = parse_oidc_settings({}, AUTH_METHODS)
     # No live provider calls from tests; scraping tests opt in with mocked HTTP.
     COVER_ART = parse_cover_art_settings({"COVER_ART_PROVIDERS": ""})
+    # Tasks run inline; tests never need Redis or a worker.
+    HUEY = build_huey({"HUEY_IMMEDIATE": "true"}, DEBUG)
 
 if not TESTING:
     check_secret_key(SECRET_KEY, DEBUG)
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+LOGIN_THROTTLE_RATES = {"login": "10/min", "register": "10/hour"}
+if TESTING:
+    # Effectively unlimited so unrelated tests never trip a throttle; throttle tests patch the rates.
+    LOGIN_THROTTLE_RATES = {"login": "100000/min", "register": "100000/min"}
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
@@ -148,4 +162,10 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+    # Scopes used by the throttles in apps/accounts/throttles.py (login is keyed per username,
+    # register per client address).
+    "DEFAULT_THROTTLE_RATES": LOGIN_THROTTLE_RATES,
+    # Reverse proxies in front of Django, so `X-Forwarded-For` can't be spoofed to dodge the
+    # register throttle; see parse_num_proxies and .env.example.
+    "NUM_PROXIES": parse_num_proxies(os.environ),
 }

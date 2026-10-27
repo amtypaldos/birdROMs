@@ -143,6 +143,137 @@ function UploadPanel({ onUploaded }) {
   );
 }
 
+const UPLOAD_STATUS_LABEL = { queued: "Queued", uploading: "Uploading…", done: "Uploaded" };
+
+function carriesFiles(event) {
+  return Array.from(event.dataTransfer?.types || []).includes("Files");
+}
+
+// Page-level drop target: drag ROM files anywhere over the app to upload them. Files are sent one
+// at a time; a failure is recorded against its file and never stops the rest of the batch.
+function GlobalDropzone({ onUploaded }) {
+  const [dragging, setDragging] = useState(false);
+  const [uploads, setUploads] = useState([]);
+  const depth = useRef(0);
+  const nextId = useRef(0);
+  const queue = useRef(Promise.resolve());
+  const mounted = useRef(true);
+  const onUploadedRef = useRef(onUploaded);
+  onUploadedRef.current = onUploaded;
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    function setStatus(id, patch) {
+      if (!mounted.current) return;
+      setUploads((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+    }
+
+    async function uploadBatch(batch) {
+      let uploaded = false;
+      for (const { id, file } of batch) {
+        if (!mounted.current) return;
+        setStatus(id, { status: "uploading" });
+        const formData = new FormData();
+        formData.append("title", file.name);
+        formData.append("file", file);
+        try {
+          await api.createRom(formData);
+          uploaded = true;
+          setStatus(id, { status: "done" });
+        } catch (err) {
+          setStatus(id, { status: "error", error: String(err.message || err) });
+        }
+      }
+      if (uploaded && mounted.current) onUploadedRef.current();
+    }
+
+    function handleDragEnter(event) {
+      if (!carriesFiles(event)) return;
+      event.preventDefault();
+      depth.current += 1;
+      setDragging(true);
+    }
+
+    function handleDragOver(event) {
+      if (!carriesFiles(event)) return;
+      event.preventDefault(); // required for the drop event to fire
+    }
+
+    function handleDragLeave(event) {
+      if (!carriesFiles(event)) return;
+      depth.current = Math.max(0, depth.current - 1);
+      if (depth.current === 0) setDragging(false);
+    }
+
+    function handleDrop(event) {
+      if (!carriesFiles(event)) return;
+      event.preventDefault();
+      depth.current = 0;
+      setDragging(false);
+      const files = Array.from(event.dataTransfer.files || []);
+      if (files.length === 0) return;
+      const batch = files.map((file) => ({ id: nextId.current++, file }));
+      setUploads((current) => [
+        ...current,
+        ...batch.map(({ id, file }) => ({ id, name: file.name, status: "queued", error: "" }))
+      ]);
+      queue.current = queue.current.then(() => uploadBatch(batch));
+    }
+
+    const handlers = {
+      dragenter: handleDragEnter,
+      dragover: handleDragOver,
+      dragleave: handleDragLeave,
+      drop: handleDrop
+    };
+    Object.entries(handlers).forEach(([type, handler]) => window.addEventListener(type, handler));
+    return () => {
+      Object.entries(handlers).forEach(([type, handler]) => window.removeEventListener(type, handler));
+    };
+  }, []);
+
+  const finished = uploads.filter((item) => item.status === "done" || item.status === "error").length;
+
+  return (
+    <>
+      {dragging ? (
+        <div className="drop-overlay">
+          <p className="drop-overlay-text" role="status">Drop ROM files to upload</p>
+        </div>
+      ) : null}
+      {uploads.length > 0 ? (
+        <section className="card upload-queue" aria-label="Upload queue">
+          <div className="upload-queue-head">
+            <h2>Uploads</h2>
+            <span className="muted">{finished} of {uploads.length} finished</span>
+            {finished === uploads.length ? (
+              <button className="ghost" onClick={() => setUploads([])}>Clear</button>
+            ) : null}
+          </div>
+          <ul className="upload-list">
+            {uploads.map((item) => (
+              <li key={item.id} className={`upload-item ${item.status}`}>
+                <span className="upload-name" title={item.name}>{item.name}</span>
+                {item.status === "error" ? (
+                  <span className="error" role="alert">Failed: {item.error}</span>
+                ) : (
+                  <span className="muted">{UPLOAD_STATUS_LABEL[item.status]}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+    </>
+  );
+}
+
 const PAGE_SIZE = 24;
 const EMPTY_PAGE = { count: 0, next: null, previous: null, results: [] };
 const DEFAULT_QUERY = { search: "", platform: "", page: 1 };
@@ -198,26 +329,54 @@ function Pagination({ romPage, page, onPage }) {
   );
 }
 
+// Scraping is async, so a fresh ROM has no art for a moment. Cards without a cover poll for it,
+// but only this many times, this far apart (~1 minute) so a ROM that never gets art stops asking.
+export const COVER_POLL_INTERVAL_MS = 3000;
+export const COVER_POLL_MAX_ATTEMPTS = 20;
+
 function CoverImage({ rom }) {
   const [src, setSrc] = useState(null);
+  const { id, cover_art_url: coverArtUrl } = rom;
 
   useEffect(() => {
-    if (!rom.cover_art_url) return undefined;
     let objectUrl = null;
     let cancelled = false;
-    api.coverObjectUrl(rom).then(
-      (url) => {
-        if (cancelled) URL.revokeObjectURL(url);
-        else setSrc((objectUrl = url));
-      },
-      () => {}
-    );
+    let timer = null;
+    let attempts = 0;
+
+    function load() {
+      api.coverObjectUrl({ id }).then(
+        (url) => {
+          if (cancelled) URL.revokeObjectURL(url);
+          else setSrc((objectUrl = url));
+        },
+        () => {}
+      );
+    }
+
+    async function poll() {
+      attempts += 1;
+      let found = false;
+      try {
+        found = await api.coverExists(id);
+      } catch {
+        // treat a failed check like "not yet" and try again
+      }
+      if (cancelled) return;
+      if (found) load();
+      else if (attempts < COVER_POLL_MAX_ATTEMPTS) timer = setTimeout(poll, COVER_POLL_INTERVAL_MS);
+    }
+
+    if (coverArtUrl) load();
+    else timer = setTimeout(poll, COVER_POLL_INTERVAL_MS);
+
     return () => {
       cancelled = true;
+      clearTimeout(timer);
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       setSrc(null);
     };
-  }, [rom]);
+  }, [id, coverArtUrl]);
 
   return (
     <div className="cover-frame">
@@ -412,6 +571,7 @@ export default function App() {
         {!authed ? <AuthPanel config={authConfig} onAuthed={() => setAuthed(true)} /> : null}
         {authed ? (
           <>
+            {canWrite ? <GlobalDropzone onUploaded={loadRoms} /> : null}
             {canWrite ? <UploadPanel onUploaded={loadRoms} /> : null}
             <RomList
               romPage={romPage}

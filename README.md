@@ -64,10 +64,26 @@ server at <http://localhost:5173>, with hot reload from `./backend` and `./front
 `docker compose exec backend python manage.py createsuperuser`. If port 5432 is already taken,
 use `BIRDROMS_DB_PORT=15432 docker compose up`.
 
-### Development (without Docker)
+### Development (native, no Docker)
 
-Backend (uv). Run `docker compose up -d postgres` for a database, or point `POSTGRES_*` at
-your own:
+Local development is fully native; Docker is only for production and self-hosting. You need
+[uv](https://docs.astral.sh/uv/), Node.js with corepack (`corepack enable`), a local
+PostgreSQL server, and [just](https://github.com/casey/just). The `justfile` wraps the common
+commands:
+
+| Recipe | What it does |
+| --- | --- |
+| `just db-init` | Create the `birdroms` role and database in local Postgres (safe to re-run) |
+| `just migrate` | Apply Django migrations |
+| `just backend` | Django dev server on <http://localhost:8000> |
+| `just frontend` | Vite dev server on <http://localhost:5173> |
+| `just test` | Backend (`manage.py test`) and frontend (`yarn test`) tests |
+| `just lint` | Frontend ESLint |
+
+First run: `just db-init && just migrate`, then `just backend` and `just frontend` in two
+terminals. Or run the steps by hand, pointing `POSTGRES_*` at your own database if needed.
+
+Backend (uv):
 
 ```bash
 cd backend
@@ -91,8 +107,9 @@ The Vite dev server proxies `/api` to `http://localhost:8000` (override with
 
 ## Testing
 
-Backend tests run against an in-memory SQLite database and a temporary media directory,
-so no PostgreSQL server (and no `.env`) is needed:
+Backend tests run against PostgreSQL (Django creates and drops a `test_<POSTGRES_DB>`
+database; `just db-init` sets up the role) and a temporary media directory, so no `.env` is
+needed:
 
 ```bash
 cd backend
@@ -112,8 +129,8 @@ yarn test
 GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every push
 and pull request:
 
-- **Backend** — `uv sync --locked` then `uv run python manage.py test` (Python 3.12, SQLite
-  test DB, no Postgres service).
+- **Backend** — `uv sync --locked` then `uv run python manage.py test` (Python 3.12, against a
+  Postgres service container).
 - **Frontend** — `yarn install --immutable`, `yarn lint`, `yarn test`, `yarn build` (Node 22,
   Yarn via corepack).
 - **Docker** — builds the production `backend` and `frontend` images (`--target prod`) to
