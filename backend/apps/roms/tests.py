@@ -1138,3 +1138,65 @@ class ROMListQueryTests(APITestCase):
             self.client.get(self.platforms_url).status_code,
             (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN),
         )
+
+
+class ROMAdminTests(TestCase):
+    changelist_url = "/admin/roms/rom/"
+
+    def setUp(self):
+        self.superuser = User.objects.create_superuser("root", "root@example.com", "test-pass-123")
+        self.client.force_login(self.superuser)
+
+    def make_rom(self, title, name, cover=False):
+        rom = ROM.objects.create(title=title, file=dummy_rom(name), uploaded_by=self.superuser)
+        if cover:
+            rom.cover_art.save("cover.png", ContentFile(b"png"), save=True)
+        return rom
+
+    def test_admin_changelist_loads(self):
+        with_cover = self.make_rom("Metroid", "metroid.nes", cover=True)
+        without_cover = self.make_rom("Pokemon Emerald", "emerald.gba")
+
+        response = self.client.get(self.changelist_url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Metroid")
+        self.assertContains(response, "Pokemon Emerald")
+        self.assertContains(response, "NES")
+        self.assertContains(response, "Game Boy Advance")
+        self.assertContains(response, f'src="{reverse("rom-cover", args=[with_cover.pk])}"')
+        self.assertNotContains(response, f'src="{reverse("rom-cover", args=[without_cover.pk])}"')
+
+    def test_admin_changelist_filters_and_searches(self):
+        self.make_rom("Metroid", "metroid.nes")
+        self.make_rom("Pokemon Emerald", "emerald.gba")
+
+        by_platform = self.client.get(self.changelist_url, {"platform": "NES"})
+        by_title = self.client.get(self.changelist_url, {"q": "Emerald"})
+
+        self.assertContains(by_platform, "Metroid")
+        self.assertNotContains(by_platform, "Pokemon Emerald")
+        self.assertContains(by_title, "Pokemon Emerald")
+        self.assertNotContains(by_title, "Metroid")
+
+    def test_admin_change_page_loads(self):
+        rom = self.make_rom("Metroid", "metroid.nes", cover=True)
+        response = self.client.get(f"{self.changelist_url}{rom.pk}/change/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_admin_rescrape_action(self):
+        first = self.make_rom("Metroid", "metroid.nes")
+        second = self.make_rom("Zelda", "zelda.nes")
+        self.make_rom("Kirby", "kirby.nes")
+
+        with mock.patch("apps.roms.admin.scrape_rom_cover") as scrape:
+            response = self.client.post(
+                self.changelist_url,
+                {"action": "rescrape_cover_art", "_selected_action": [first.pk, second.pk]},
+                follow=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual({call.args[0] for call in scrape.call_args_list}, {first.pk, second.pk})
+        self.assertEqual(scrape.call_count, 2)
+        self.assertContains(response, "Queued cover art scraping for 2 ROMs.")
