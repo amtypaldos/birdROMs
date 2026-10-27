@@ -6,14 +6,17 @@ The image is downloaded (with a timeout and size cap), saved to the configured s
 the same permission-checked API as everything else.
 """
 
+import html
 import logging
 import os
 import re
 from dataclasses import dataclass
-from urllib.parse import quote
+from difflib import SequenceMatcher
+from urllib.parse import quote, unquote
 
 import requests
 from django.conf import settings
+from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.core.exceptions import ImproperlyConfigured
 
@@ -67,6 +70,12 @@ LIBRETRO_SYSTEMS = {
 LIBRETRO_KINDS = ("Named_Boxarts", "Named_Titles", "Named_Snaps")
 # libretro-thumbnails replaces these characters with "_" in file names.
 LIBRETRO_UNSAFE = re.compile(r'[&*/:`<>?\\|"]')
+LIBRETRO_BASE = "https://thumbnails.libretro.com/"
+# The name index is a ~MB directory listing per system; cache it rather than fetch on every upload.
+LIBRETRO_INDEX_TTL = 24 * 60 * 60
+# Minimum difflib ratio (0-1) between normalized titles to accept a libretro match. High enough
+# to reject different games (and "Foo" vs "Foo Deluxe"), low enough to forgive small typos.
+LIBRETRO_MATCH_THRESHOLD = 0.85
 
 # birdROMs platform -> ScreenScraper `systemeid`.
 SCREENSCRAPER_SYSTEMS = {
@@ -154,15 +163,92 @@ def _title_candidates(title, filename):
     return candidates
 
 
+_TAGS = re.compile(r"\([^)]*\)|\[[^\]]*\]")
+_NON_WORD = re.compile(r"[\W_]+")
+_TRAILING_ARTICLE = re.compile(r"^(.*), (the|a|an)$")
+_HREF_PNG = re.compile(r'href="([^"]+)\.png"', re.IGNORECASE)
+# Sequel markers: digits and roman numerals. "Sonic 2" is not a match for "Sonic", however
+# similar the strings are.
+_SEQUEL_TOKEN = re.compile(r"^(\d+|[ivx]{2,})$")
+_REGION_PREFERENCE = ("(usa", "(world", "(europe")
+
+
+def normalize_title(name: str) -> str:
+    """Lowercase `name`, dropping `(region)`/`[flag]` tags and punctuation, collapsing whitespace.
+    No-Intro's trailing article ("Legend of Zelda, The") is moved to the front."""
+    name = _TAGS.sub(" ", name).casefold().strip()
+    article = _TRAILING_ARTICLE.match(name)
+    if article:
+        name = f"{article.group(2)} {article.group(1)}"
+    return _NON_WORD.sub(" ", name).strip()
+
+
+def libretro_name_index(system: str, timeout: float = DEFAULT_TIMEOUT) -> list[str]:
+    """The thumbnail names (without `.png`) libretro has boxart for in `system`. Cached; a missing
+    listing yields an empty list, which is not cached. Network errors propagate."""
+    key = f"libretro-index:{quote(system)}"  # Cache keys may not contain spaces.
+    names = cache.get(key)
+    if names is not None:
+        return names
+    url = f"{LIBRETRO_BASE}{quote(f'{system}/Named_Boxarts/')}"
+    response = requests.get(url, timeout=timeout, headers={"User-Agent": USER_AGENT})
+    if response.status_code == 404:
+        return []
+    response.raise_for_status()
+    listing = response.content.decode("utf-8", errors="replace")
+    names = [html.unescape(unquote(href)) for href in _HREF_PNG.findall(listing)]
+    if names:
+        cache.set(key, names, LIBRETRO_INDEX_TTL)
+    return names
+
+
+def _sequel_tokens(normalized):
+    return sorted(token for token in normalized.split() if _SEQUEL_TOKEN.match(token))
+
+
+def best_libretro_name(title: str, platform: str, index: list[str]) -> str | None:
+    """The `index` entry whose normalized form is closest to `title`, or None if none reaches
+    `LIBRETRO_MATCH_THRESHOLD`. Equal matches prefer an exact name, then USA/World/Europe releases."""
+    wanted = normalize_title(title)
+    if not wanted:
+        return None
+    wanted_sequel = _sequel_tokens(wanted)
+    matcher = SequenceMatcher(autojunk=False)
+    matcher.set_seq2(wanted)
+    best, best_key = None, None
+    for name in index:
+        candidate = normalize_title(name)
+        matcher.set_seq1(candidate)
+        # The cheap upper bounds skip nearly all of a multi-thousand entry index.
+        if matcher.real_quick_ratio() < LIBRETRO_MATCH_THRESHOLD or matcher.quick_ratio() < LIBRETRO_MATCH_THRESHOLD:
+            continue
+        ratio = matcher.ratio()
+        if ratio < LIBRETRO_MATCH_THRESHOLD or _sequel_tokens(candidate) != wanted_sequel:
+            continue
+        lowered = name.casefold()
+        region = next((i for i, tag in enumerate(_REGION_PREFERENCE) if tag in lowered), len(_REGION_PREFERENCE))
+        key = (ratio, name == title.strip(), -region)
+        if best_key is None or key > best_key:
+            best, best_key = name, key
+    return best
+
+
 def find_libretro(title, platform, filename, config):
     system = LIBRETRO_SYSTEMS.get(platform)
     if not system:
         return []
+    index = libretro_name_index(system, config.timeout)
+    # Use libretro's own spelling when we can match it; otherwise guess the name as given.
+    names = []
+    for candidate in _title_candidates(title, filename):
+        name = best_libretro_name(candidate, platform, index) or candidate
+        if name not in names:
+            names.append(name)
     urls = []
     for kind in LIBRETRO_KINDS:
-        for name in _title_candidates(title, filename):
+        for name in names:
             safe = LIBRETRO_UNSAFE.sub("_", name)
-            urls.append(f"https://thumbnails.libretro.com/{quote(f'{system}/{kind}/{safe}.png')}")
+            urls.append(f"{LIBRETRO_BASE}{quote(f'{system}/{kind}/{safe}.png')}")
     return urls
 
 
