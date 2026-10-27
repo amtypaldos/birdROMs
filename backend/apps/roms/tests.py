@@ -1,3 +1,4 @@
+from difflib import SequenceMatcher
 from html import escape
 from io import StringIO
 from pathlib import Path
@@ -25,6 +26,7 @@ from birdroms.tasks import scrape_rom_cover
 from birdroms.uploads import parse_max_upload_bytes
 
 from .cover_art import (
+    LIBRETRO_MATCH_THRESHOLD,
     best_libretro_name,
     find_libretro,
     find_screenscraper,
@@ -224,8 +226,12 @@ class BestLibretroNameTests(SimpleTestCase):
         self.assertEqual(best_libretro_name("The Legend of Zelda", "NES", NES_NAMES), "Legend of Zelda, The (USA)")
 
     def test_best_match_rejects_false_positive(self):
-        self.assertIsNone(best_libretro_name("Sonic the Hedgehog", "NES", NES_NAMES))
         self.assertIsNone(best_libretro_name("Obscure Homebrew", "NES", NES_NAMES))
+        # A true near-miss: the strings are similar enough to pass the threshold on ratio alone
+        # (vs "Super Mario Bros."), so only the sequel guard rejects it.
+        ratio = SequenceMatcher(None, normalize_title("Super Mario Bros. 2"), normalize_title("Super Mario Bros. (World)")).ratio()
+        self.assertGreaterEqual(ratio, LIBRETRO_MATCH_THRESHOLD)
+        self.assertIsNone(best_libretro_name("Super Mario Bros. 2", "NES", NES_NAMES))
         self.assertIsNone(best_libretro_name("Metroid", "NES", []))
 
     def test_sequels_are_not_confused_with_the_original(self):
@@ -285,6 +291,15 @@ class ProviderTests(SimpleTestCase):
             urls = find_libretro("Obscure Homebrew", "NES", "", LIBRETRO_ONLY)
         self.assertEqual(len(urls), 3)
         self.assertTrue(urls[0].endswith("/Named_Boxarts/Obscure%20Homebrew.png"))
+
+    def test_libretro_guesses_exact_name_when_index_fetch_fails(self):
+        for failure in (requests.ConnectionError("down"), FakeResponse(status_code=503, content_type="text/html")):
+            with self.subTest(failure=failure):
+                get = fake_http({NES_INDEX_URL: failure})
+                with mock.patch("apps.roms.cover_art.requests.get", get), self.assertLogs("apps.roms.cover_art", "WARNING"):
+                    urls = find_libretro("Metroid", "NES", "", LIBRETRO_ONLY)
+                self.assertEqual(len(urls), 3)
+                self.assertTrue(urls[0].endswith("/Named_Boxarts/Metroid.png"))
 
     def test_libretro_urls_map_platform_and_sanitize_title(self):
         with mock.patch("apps.roms.cover_art.requests.get", fake_http({})):
