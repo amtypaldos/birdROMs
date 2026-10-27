@@ -5,13 +5,17 @@ implementation stays swappable in one place. The instance is configured by `sett
 (see `birdroms/huey_config.py`). The app's own tasks are defined here too.
 """
 
+import os
+
 from huey.contrib.djhuey import HUEY as huey
 from huey.contrib.djhuey import periodic_task, task
 
 from apps.roms.cover_art import safe_fetch_cover_for_rom
 from apps.roms.models import ROM
 
-__all__ = ["huey", "periodic_task", "scrape_rom_cover", "task"]
+from .huey_config import parse_sweep_crontab
+
+__all__ = ["huey", "periodic_task", "scrape_rom_cover", "sweep_missing_cover_art", "task"]
 
 
 @task()
@@ -25,3 +29,22 @@ def scrape_rom_cover(rom_id: int) -> bool:
     if rom is None:
         return False
     return safe_fetch_cover_for_rom(rom)
+
+
+def roms_missing_cover_art():
+    """ROMs that still have no cover art."""
+    return ROM.objects.filter(cover_art="")
+
+
+@periodic_task(parse_sweep_crontab(os.environ))
+def sweep_missing_cover_art() -> int:
+    """Enqueue a cover-art scrape for every ROM still missing art; returns how many were queued.
+
+    Runs hourly by default (`COVER_ART_SWEEP_CRONTAB` overrides). The per-ROM scrapes are
+    separate tasks, so one slow or failing provider lookup cannot hold up the rest.
+    """
+    queued = 0
+    for rom_id in roms_missing_cover_art().values_list("pk", flat=True):
+        scrape_rom_cover(rom_id)
+        queued += 1
+    return queued
