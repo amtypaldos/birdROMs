@@ -223,8 +223,10 @@ def libretro_name_index(system: str, timeout: float = DEFAULT_TIMEOUT) -> list[s
     if names is not None:
         return names
     url = f"{LIBRETRO_BASE}{quote(f'{system}/Named_Boxarts/')}"
-    response = requests.get(url, timeout=timeout, headers={"User-Agent": USER_AGENT})
-    if response.status_code == 404:
+    # The host is fixed, so a redirect is never legitimate: refuse it (an empty index) rather than
+    # let a compromised upstream steer this request to an internal address.
+    response = requests.get(url, timeout=timeout, headers={"User-Agent": USER_AGENT}, allow_redirects=False)
+    if response.status_code == 404 or 300 <= response.status_code < 400:
         return []
     response.raise_for_status()
     listing = response.content.decode("utf-8", errors="replace")
@@ -307,9 +309,18 @@ def lookup_screenscraper_game(title, platform, filename, config):
         params.update(ssid=creds["user"], sspassword=creds["password"])
     if platform in SCREENSCRAPER_SYSTEMS:
         params["systemeid"] = SCREENSCRAPER_SYSTEMS[platform]
-    response = requests.get(SCREENSCRAPER_API, params=params, timeout=config.timeout, headers={"User-Agent": USER_AGENT})
+    # Fixed host: never follow a redirect; a 3xx is treated as a bad response (ValueError).
+    response = requests.get(
+        SCREENSCRAPER_API,
+        params=params,
+        timeout=config.timeout,
+        headers={"User-Agent": USER_AGENT},
+        allow_redirects=False,
+    )
     if response.status_code == 404:
         return None  # ScreenScraper answers 404 when it does not know the game.
+    if 300 <= response.status_code < 400:
+        raise ValueError(f"ScreenScraper redirected (HTTP {response.status_code}); refusing to follow it.")
     response.raise_for_status()
     payload = response.json()
     jeu = payload.get("response", {}).get("jeu") if isinstance(payload, dict) else None
@@ -482,13 +493,18 @@ def fetch_cover_for_rom(rom, config=None) -> bool:
     """Scrape cover art and, when ScreenScraper is configured, metadata for `rom` and store them.
     Metadata comes from ScreenScraper whichever provider supplied the cover. Returns True if new
     art was saved."""
+    return scrape_rom(rom, config)[0]
+
+
+def scrape_rom(rom, config=None) -> tuple[bool, bool]:
+    """Like `fetch_cover_for_rom`, but reports `(cover_saved, metadata_saved)`."""
     config = config or settings.COVER_ART
     filename = rom.file.name if rom.file else ""
     game = ScreenScraperGame(rom.title, rom.platform, filename, config) if SCREENSCRAPER in config.providers else None
     found = scrape_cover_art(rom.title, rom.platform, filename, config, screenscraper=game)
     metadata = game.metadata() if game else {}
     if not found and not metadata:
-        return False
+        return False, False
     update_fields = list(metadata)
     for field, value in metadata.items():
         setattr(rom, field, value)
@@ -502,7 +518,7 @@ def fetch_cover_for_rom(rom, config=None) -> bool:
     rom.save(update_fields=update_fields)
     if old and old != rom.cover_art.name:
         rom.cover_art.storage.delete(old)
-    return bool(found)
+    return bool(found), bool(metadata)
 
 
 def safe_fetch_cover_for_rom(rom) -> bool:

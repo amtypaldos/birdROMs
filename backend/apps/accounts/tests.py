@@ -1,6 +1,7 @@
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.core.exceptions import ImproperlyConfigured
@@ -63,6 +64,21 @@ class RegisterTests(APITestCase):
             codes = [
                 self.client.post(
                     self.url, {"username": f"user{i}", "email": "", "password": "s3cure-pass-xyz"}, format="json"
+                ).status_code
+                for i in range(3)
+            ]
+        self.assertEqual(codes, [201, 201, 429])
+
+    def test_register_throttle_ignores_client_supplied_forwarded_for_entries(self):
+        # One trusted proxy: only the last X-Forwarded-For entry (appended by it) is the client.
+        drf = {**settings.REST_FRAMEWORK, "NUM_PROXIES": 1}
+        with override_settings(REST_FRAMEWORK=drf), mock.patch.dict(SimpleRateThrottle.THROTTLE_RATES, {"register": "2/min"}):
+            codes = [
+                self.client.post(
+                    self.url,
+                    {"username": f"user{i}", "email": "", "password": "s3cure-pass-xyz"},
+                    format="json",
+                    HTTP_X_FORWARDED_FOR=f"10.0.0.{i}, 203.0.113.7",
                 ).status_code
                 for i in range(3)
             ]

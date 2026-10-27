@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from apps.roms.cover_art import parse_cover_art_settings
 
 from .auth_config import parse_allow_local_login, parse_auth_methods, parse_oidc_settings
-from .deploy_config import check_secret_key, parse_csv, parse_debug, parse_proxy_settings
+from .deploy_config import check_secret_key, parse_csv, parse_debug, parse_num_proxies, parse_proxy_settings
 from .huey_config import build_huey
 from .storage import build_storages
 from .uploads import parse_max_upload_bytes
@@ -165,4 +165,7 @@ REST_FRAMEWORK = {
     # Scopes used by the throttles in apps/accounts/throttles.py (login is keyed per username,
     # register per client address).
     "DEFAULT_THROTTLE_RATES": LOGIN_THROTTLE_RATES,
+    # Reverse proxies in front of Django, so `X-Forwarded-For` can't be spoofed to dodge the
+    # register throttle; see parse_num_proxies and .env.example.
+    "NUM_PROXIES": parse_num_proxies(os.environ),
 }
