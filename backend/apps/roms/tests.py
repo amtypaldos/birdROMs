@@ -1204,6 +1204,86 @@ class ROMListQueryTests(APITestCase):
         )
 
 
+class DeviceListingTests(APITestCase):
+    list_url = reverse("rom-list")
+    platforms_url = reverse("rom-platforms")
+
+    def setUp(self):
+        self.admin_user = make_user("admin", "super_admin")
+        self.client.force_authenticate(make_user("reader", "readonly"))
+
+    def add(self, title, filename, **kwargs):
+        return ROM.objects.create(title=title, file=dummy_rom(filename), uploaded_by=self.admin_user, **kwargs)
+
+    def device_list(self, **params):
+        return self.client.get(self.list_url, {"fields": "device", **params})
+
+    def test_device_listing_has_size_and_cover_url(self):
+        with_cover = self.add("Zelda", "zelda.nes", cover_art=ContentFile(b"png", name="zelda.png"))
+        without_cover = self.add("Metroid", "metroid.nes")
+
+        response = self.device_list()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        rows = {row["id"]: row for row in response.data["results"]}
+        self.assertEqual(set(rows[with_cover.pk]), {"id", "title", "platform", "extension", "size_bytes", "cover_url"})
+        self.assertEqual(rows[with_cover.pk]["title"], "Zelda")
+        self.assertEqual(rows[with_cover.pk]["platform"], "NES")
+        self.assertEqual(rows[with_cover.pk]["extension"], ".nes")
+        self.assertEqual(rows[with_cover.pk]["size_bytes"], 16)
+        self.assertTrue(rows[with_cover.pk]["cover_url"].endswith(f"/api/roms/{with_cover.pk}/cover/"))
+        self.assertIsNone(rows[without_cover.pk]["cover_url"])
+
+    def test_default_listing_is_unchanged(self):
+        self.add("Zelda", "zelda.nes")
+        row = self.client.get(self.list_url).data["results"][0]
+        self.assertIn("download_url", row)
+        self.assertNotIn("size_bytes", row)
+
+    def test_size_bytes_is_null_when_the_file_size_is_unavailable(self):
+        self.add("Zelda", "zelda.nes")
+        with mock.patch("django.db.models.fields.files.FieldFile.size", new_callable=mock.PropertyMock) as size:
+            size.side_effect = OSError("storage unavailable")
+            response = self.device_list()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNone(response.data["results"][0]["size_bytes"])
+
+    def test_device_listing_paginates(self):
+        for i in range(30):
+            self.add(f"Game {i:02d}", f"game{i}.nes")
+
+        first = self.device_list()
+        self.assertEqual(set(first.data), {"count", "next", "previous", "results"})
+        self.assertEqual(first.data["count"], 30)
+        self.assertEqual(len(first.data["results"]), 24)
+        self.assertIsNotNone(first.data["next"])
+        self.assertIn("fields=device", first.data["next"])
+
+        second = self.device_list(page=2)
+        self.assertEqual(len(second.data["results"]), 6)
+        self.assertEqual(len(self.device_list(page_size=5).data["results"]), 5)
+
+    def test_device_listing_reuses_search_and_platform_filters(self):
+        self.add("Zelda", "zelda.nes")
+        self.add("Zelda Minish Cap", "minish.gba")
+        self.add("Metroid Fusion", "fusion.gba")
+
+        response = self.device_list(search="zelda", platform="Game Boy Advance")
+
+        self.assertEqual([row["title"] for row in response.data["results"]], ["Zelda Minish Cap"])
+
+    def test_device_listing_requires_a_role(self):
+        self.client.force_authenticate(make_user("nobody"))
+        self.assertEqual(self.device_list().status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_platforms_endpoint_returns_distinct_platforms_for_browse(self):
+        self.add("Zelda", "zelda.nes")
+        self.add("Metroid", "metroid.nes")
+        self.add("Minish Cap", "minish.gba")
+
+        self.assertEqual(self.client.get(self.platforms_url).data, ["Game Boy Advance", "NES"])
+
+
 class ROMAdminTests(TestCase):
     changelist_url = "/admin/roms/rom/"
 

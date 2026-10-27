@@ -63,6 +63,34 @@ class ROMSerializer(serializers.ModelSerializer):
         return self._api_url("rom-cover", obj) if obj.cover_art else None
 
 
+class DeviceROMSerializer(serializers.ModelSerializer):
+    """Compact listing for the handheld client: just enough for a cover grid and a download."""
+
+    size_bytes = serializers.SerializerMethodField()
+    # Authenticated cover endpoint (fetched lazily by the client), or null when there is no cover.
+    cover_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ROM
+        fields = ["id", "title", "platform", "extension", "size_bytes", "cover_url"]
+        read_only_fields = fields
+
+    def get_size_bytes(self, obj):
+        # Reads from the configured storage (a HEAD request on S3). A missing or unreachable
+        # file must not break the whole listing, so the size is simply unknown.
+        try:
+            return obj.file.size
+        except Exception:
+            return None
+
+    def get_cover_url(self, obj):
+        if not obj.cover_art:
+            return None
+        path = reverse("rom-cover", args=[obj.pk])
+        request = self.context.get("request")
+        return request.build_absolute_uri(path) if request else path
+
+
 class PlaylistSerializer(serializers.ModelSerializer):
     created_by_username = serializers.CharField(source="created_by.username", read_only=True)
     rom_count = serializers.SerializerMethodField()
