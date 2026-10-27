@@ -149,14 +149,15 @@ if not TESTING:
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-LOGIN_THROTTLE_RATES = {"login": "10/min", "register": "10/hour"}
+LOGIN_THROTTLE_RATES = {"login": "10/min", "register": "10/hour", "pair_start": "10/min", "pair_code": "120/min"}
 if TESTING:
     # Effectively unlimited so unrelated tests never trip a throttle; throttle tests patch the rates.
-    LOGIN_THROTTLE_RATES = {"login": "100000/min", "register": "100000/min"}
+    LOGIN_THROTTLE_RATES = {key: "100000/min" for key in LOGIN_THROTTLE_RATES}
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.TokenAuthentication",
+        "apps.accounts.authentication.DeviceTokenAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [

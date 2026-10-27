@@ -29,3 +29,24 @@ class RegisterThrottle(SimpleRateThrottle):
 
     def get_cache_key(self, request, view):
         return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
+
+
+class PairStartThrottle(SimpleRateThrottle):
+    """Limit unauthenticated creation of pairing requests per client address."""
+
+    scope = "pair_start"
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
+
+
+class PairCodeThrottle(SimpleRateThrottle):
+    """Limit approve/poll attempts per client address, so short codes can't be brute-forced.
+
+    Sized to allow a device polling every couple of seconds for the life of a pairing code.
+    """
+
+    scope = "pair_code"
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}

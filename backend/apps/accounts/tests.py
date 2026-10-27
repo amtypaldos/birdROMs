@@ -1,3 +1,4 @@
+from datetime import timedelta
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
@@ -8,12 +9,14 @@ from django.core.exceptions import ImproperlyConfigured
 from django.http import HttpResponseRedirect
 from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.test import APITestCase
 
-from apps.accounts.models import OIDCIdentity
+from apps.accounts.models import PAIRING_CODE_ALPHABET, DeviceToken, OIDCIdentity, PairingRequest, hash_device_token
 from apps.accounts.services import set_role, user_role
 from birdroms.auth_config import parse_allow_local_login, parse_auth_methods, parse_oidc_settings
 
@@ -451,3 +454,191 @@ class OIDCFlowTests(APITestCase):
         self.assertEqual(self.client.get(reverse("oidc-login")).status_code, status.HTTP_404_NOT_FOUND)
         self.assertEqual(self.callback(self.claims()).status_code, status.HTTP_404_NOT_FOUND)
         self.assertFalse(User.objects.exists())
+
+
+class DevicePairingTests(APITestCase):
+    start_url = "/api/devices/pair/start"
+    approve_url = "/api/devices/pair/approve"
+    poll_url = "/api/devices/pair/poll"
+
+    def setUp(self):
+        cache.clear()  # Throttle counters live in the cache.
+        self.user = User.objects.create_user("owner", password="s3cure-pass-xyz")
+        self.api_token = Token.objects.create(user=self.user)
+
+    def _start(self):
+        response = self.client.post(self.start_url)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        return response.data
+
+    def _approve(self, code):
+        return self.client.post(
+            self.approve_url, {"code": code}, format="json", HTTP_AUTHORIZATION=f"Token {self.api_token.key}"
+        )
+
+    def _expire(self, code):
+        PairingRequest.objects.filter(code=code).update(expires_at=timezone.now() - timedelta(seconds=1))
+
+    def _pair_device(self):
+        """Run the whole flow and return the raw device token the device would hold."""
+        code = self._start()["code"]
+        self._approve(code)
+        return self.client.get(self.poll_url, {"code": code}).data["device_token"]
+
+    def test_pair_start_returns_code_qr_expiry(self):
+        data = self._start()
+
+        self.assertEqual(len(data["code"]), 6)
+        self.assertTrue(set(data["code"]) <= set(PAIRING_CODE_ALPHABET))
+        parsed = urlparse(data["qr_url"])
+        self.assertTrue(parsed.scheme and parsed.netloc)  # Absolute, so the phone can open it from the QR.
+        self.assertEqual(parse_qs(parsed.query), {"code": [data["code"]]})
+        self.assertGreater(parse_datetime(data["expires_at"]), timezone.now())
+        pairing = PairingRequest.objects.get(code=data["code"])
+        self.assertIsNone(pairing.approved_by)
+        self.assertIsNone(pairing.device_token)
+        self.assertFalse(pairing.consumed)
+        self.assertEqual(pairing.qr_payload, data["qr_url"])
+
+    def test_start_is_rate_limited_per_client(self):
+        with mock.patch.dict(SimpleRateThrottle.THROTTLE_RATES, {"pair_start": "2/min"}):
+            codes = [self.client.post(self.start_url).status_code for _ in range(3)]
+        self.assertEqual(codes, [201, 201, 429])
+
+    def test_start_purges_long_expired_requests(self):
+        old = self._start()["code"]
+        PairingRequest.objects.filter(code=old).update(expires_at=timezone.now() - timedelta(days=1))
+        recent = self._start()["code"]
+        PairingRequest.objects.filter(code=recent).update(expires_at=timezone.now() - timedelta(minutes=1))
+
+        self._start()
+
+        self.assertFalse(PairingRequest.objects.filter(code=old).exists())
+        self.assertTrue(PairingRequest.objects.filter(code=recent).exists())
+
+    def test_approve_requires_auth_and_mints_token(self):
+        code = self._start()["code"]
+
+        anonymous = self.client.post(self.approve_url, {"code": code}, format="json")
+        self.assertIn(anonymous.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+        self.assertEqual(DeviceToken.objects.count(), 0)
+
+        response = self._approve(code)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertNotIn("device_token", response.data)  # The secret goes to the device, never the phone.
+        device_token = DeviceToken.objects.get()
+        self.assertEqual(device_token.user, self.user)
+        self.assertFalse(device_token.revoked)
+        pairing = PairingRequest.objects.get(code=code)
+        self.assertEqual(pairing.approved_by, self.user)
+        self.assertEqual(pairing.device_token, device_token)
+        self.assertFalse(pairing.consumed)
+
+    def test_approve_rejects_unknown_empty_and_already_approved_codes(self):
+        self.assertEqual(self._approve("ZZZZZZ").status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(self._approve("").status_code, status.HTTP_400_BAD_REQUEST)
+
+        code = self._start()["code"]
+        self.assertEqual(self._approve(code).status_code, status.HTTP_200_OK)
+        self.assertEqual(self._approve(code).status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(DeviceToken.objects.count(), 1)
+
+    def test_approve_ignores_case_and_whitespace(self):
+        code = self._start()["code"]
+        self.assertEqual(self._approve(f" {code.lower()} ").status_code, status.HTTP_200_OK)
+
+    def test_device_token_cannot_approve_pairings(self):
+        # Otherwise a lost device could mint replacement tokens that outlive its own revocation.
+        raw = self._pair_device()
+        second = self._start()["code"]
+
+        response = self.client.post(
+            self.approve_url, {"code": second}, format="json", HTTP_AUTHORIZATION=f"Device {raw}"
+        )
+
+        self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+        self.assertEqual(DeviceToken.objects.count(), 1)
+
+    def test_poll_pending_then_returns_token_once(self):
+        code = self._start()["code"]
+
+        pending = self.client.get(self.poll_url, {"code": code})
+        self.assertEqual(pending.status_code, status.HTTP_202_ACCEPTED)
+        self.assertNotIn("device_token", pending.data)
+
+        self._approve(code)
+        done = self.client.get(self.poll_url, {"code": code})
+
+        self.assertEqual(done.status_code, status.HTTP_200_OK)
+        self.assertEqual(done.data["user"]["username"], "owner")
+        raw = done.data["device_token"]
+        # Only a digest is kept; the raw secret authenticates but is not at rest.
+        device_token = DeviceToken.objects.get()
+        self.assertNotEqual(device_token.token_hash, raw)
+        self.assertEqual(device_token.token_hash, hash_device_token(raw))
+        pairing = PairingRequest.objects.get(code=code)
+        self.assertTrue(pairing.consumed)
+        self.assertEqual(pairing.pending_token, "")
+
+        again = self.client.get(self.poll_url, {"code": code})
+        self.assertEqual(again.status_code, status.HTTP_410_GONE)
+        self.assertNotIn("device_token", again.data)
+
+    def test_poll_unknown_or_missing_code(self):
+        self.assertEqual(self.client.get(self.poll_url, {"code": "ZZZZZZ"}).status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(self.client.get(self.poll_url).status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_approve_and_poll_are_rate_limited_per_client(self):
+        code = self._start()["code"]
+        with mock.patch.dict(SimpleRateThrottle.THROTTLE_RATES, {"pair_code": "2/min"}):
+            codes = [self.client.get(self.poll_url, {"code": code}).status_code for _ in range(3)]
+            self.assertEqual(codes, [202, 202, 429])
+            self.assertEqual(self._approve(code).status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+    def test_expired_code_cannot_be_approved_or_polled(self):
+        code = self._start()["code"]
+        self._expire(code)
+
+        self.assertEqual(self._approve(code).status_code, status.HTTP_410_GONE)
+        self.assertEqual(self.client.get(self.poll_url, {"code": code}).status_code, status.HTTP_410_GONE)
+        self.assertEqual(DeviceToken.objects.count(), 0)
+
+    def test_approved_but_expired_request_never_hands_over_the_token(self):
+        code = self._start()["code"]
+        self._approve(code)
+        self._expire(code)
+
+        response = self.client.get(self.poll_url, {"code": code})
+
+        self.assertEqual(response.status_code, status.HTTP_410_GONE)
+        self.assertNotIn("device_token", response.data)
+        # The undelivered token is dead and its plaintext is gone.
+        self.assertTrue(DeviceToken.objects.get().revoked)
+        self.assertEqual(PairingRequest.objects.get(code=code).pending_token, "")
+
+    def test_device_token_auth_accepted_and_revocable(self):
+        raw = self._pair_device()
+        me_url = reverse("me")
+
+        response = self.client.get(me_url, HTTP_AUTHORIZATION=f"Device {raw}")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["id"], self.user.id)
+        self.assertIsNotNone(DeviceToken.objects.get().last_used_at)
+
+        DeviceToken.objects.update(revoked=True)
+        revoked = self.client.get(me_url, HTTP_AUTHORIZATION=f"Device {raw}")
+        self.assertEqual(revoked.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_device_token_auth_rejects_garbage_and_inactive_users(self):
+        me_url = reverse("me")
+        for header in ("Device nonsense", "Device", "Device a b"):
+            with self.subTest(header=header):
+                response = self.client.get(me_url, HTTP_AUTHORIZATION=header)
+                self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        raw = self._pair_device()
+        User.objects.update(is_active=False)
+        response = self.client.get(me_url, HTTP_AUTHORIZATION=f"Device {raw}")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
