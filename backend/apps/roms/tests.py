@@ -18,6 +18,7 @@ from rest_framework.test import APITestCase
 from storages.backends.s3 import S3Storage
 
 from birdroms.storage import FILESYSTEM_STORAGE, S3_STORAGE, build_storages
+from birdroms.tasks import scrape_rom_cover
 from birdroms.uploads import parse_max_upload_bytes
 
 from .cover_art import find_libretro, find_screenscraper, parse_cover_art_settings
@@ -245,8 +246,10 @@ class CoverArtScrapeTests(APITestCase):
         self.assertEqual(rom.cover_art_source, "libretro")
         self.assertTrue(rom.cover_art.name.startswith("covers/") and rom.cover_art.name.endswith(".png"))
         self.assertTrue(default_storage.exists(rom.cover_art.name))
-        self.assertEqual(response.data["cover_art_url"], f"http://testserver{reverse('rom-cover', args=[rom.pk])}")
-        self.assertEqual(response.data["cover_art_source"], "libretro")
+        # The scrape runs as a background task, so the upload response is serialized before it.
+        detail = self.client.get(reverse("rom-detail", args=[rom.pk]))
+        self.assertEqual(detail.data["cover_art_url"], f"http://testserver{reverse('rom-cover', args=[rom.pk])}")
+        self.assertEqual(detail.data["cover_art_source"], "libretro")
         self.assertEqual(get.call_args.kwargs["timeout"], 3.0)
 
         cover = self.client.get(reverse("rom-cover", args=[rom.pk]))
@@ -356,6 +359,41 @@ class CoverArtScrapeTests(APITestCase):
         self.assertEqual(self.client.get(url).status_code, status.HTTP_200_OK)
         self.client.force_authenticate(None)
         self.assertIn(self.client.get(url).status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+
+class ScrapeCoverTaskTests(APITestCase):
+    list_url = reverse("rom-list")
+
+    def setUp(self):
+        self.admin_user = make_user("admin", "super_admin")
+
+    def make_rom(self):
+        return ROM.objects.create(title="Metroid", file=dummy_rom("metroid.nes"), uploaded_by=self.admin_user)
+
+    def test_upload_enqueues_scrape(self):
+        self.client.force_authenticate(self.admin_user)
+        with mock.patch("apps.roms.views.scrape_rom_cover") as scrape:
+            response = self.client.post(self.list_url, {"title": "Metroid", "file": dummy_rom()}, format="multipart")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        scrape.assert_called_once_with(ROM.objects.get().pk)
+
+    def test_scrape_task_missing_rom_is_noop(self):
+        with mock.patch("birdroms.tasks.safe_fetch_cover_for_rom") as fetch:
+            self.assertFalse(scrape_rom_cover.call_local(999_999))
+        fetch.assert_not_called()
+
+    def test_scrape_task_returns_whether_art_changed(self):
+        rom = self.make_rom()
+        with mock.patch("birdroms.tasks.safe_fetch_cover_for_rom", return_value=True) as fetch:
+            self.assertTrue(scrape_rom_cover.call_local(rom.pk))
+        fetch.assert_called_once_with(rom)
+
+    def test_scrape_task_swallows_provider_error(self):
+        rom = self.make_rom()
+        with mock.patch("apps.roms.cover_art.fetch_cover_for_rom", side_effect=RuntimeError("boom")), self.assertLogs(
+            "apps.roms.cover_art", "ERROR"
+        ):
+            self.assertFalse(scrape_rom_cover.call_local(rom.pk))
 
 
 @override_settings(COVER_ART=LIBRETRO_ONLY)
