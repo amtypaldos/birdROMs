@@ -110,6 +110,10 @@ SCREENSCRAPER_API = "https://api.screenscraper.fr/api2/jeuInfos.php"
 # Preferred media types, best first: 2D box front, title screen, screenshot.
 SCREENSCRAPER_MEDIA = ("box-2D", "sstitle", "ss")
 SCREENSCRAPER_REGIONS = ("us", "wor", "eu", "ss", "jp")
+# Languages preferred for free text (synopsis, genre names); otherwise the first one ScreenScraper lists.
+SCREENSCRAPER_LANGUAGES = ("en",)
+# ROM columns filled from ScreenScraper's game metadata.
+METADATA_FIELDS = ("description", "genre", "release_year", "developer", "publisher", "players", "rating", "region")
 
 
 @dataclass(frozen=True)
@@ -257,10 +261,12 @@ def find_libretro(title, platform, filename, config):
     return urls
 
 
-def find_screenscraper(title, platform, filename, config):
+def lookup_screenscraper_game(title, platform, filename, config):
+    """The ScreenScraper `jeu` payload for a ROM, or None if it is unconfigured or unknown there.
+    Network and decoding errors propagate."""
     creds = config.screenscraper
     if not (creds["dev_id"] and creds["dev_password"]):
-        return []  # Not configured: skip silently.
+        return None  # Not configured: skip silently.
     params = {
         "devid": creds["dev_id"],
         "devpassword": creds["dev_password"],
@@ -275,9 +281,16 @@ def find_screenscraper(title, platform, filename, config):
         params["systemeid"] = SCREENSCRAPER_SYSTEMS[platform]
     response = requests.get(SCREENSCRAPER_API, params=params, timeout=config.timeout, headers={"User-Agent": USER_AGENT})
     if response.status_code == 404:
-        return []  # ScreenScraper answers 404 when it does not know the game.
+        return None  # ScreenScraper answers 404 when it does not know the game.
     response.raise_for_status()
-    medias = response.json().get("response", {}).get("jeu", {}).get("medias", []) or []
+    payload = response.json()
+    jeu = payload.get("response", {}).get("jeu") if isinstance(payload, dict) else None
+    return jeu if isinstance(jeu, dict) else None
+
+
+def screenscraper_image_urls(jeu):
+    """Cover candidates from a `jeu` payload: box art first, then title screen, then screenshot."""
+    medias = (jeu or {}).get("medias") or []
 
     def rank(media):
         region = media.get("region", "")
@@ -288,6 +301,93 @@ def find_screenscraper(title, platform, filename, config):
 
     usable = [m for m in medias if m.get("type") in SCREENSCRAPER_MEDIA and m.get("url")]
     return [m["url"] for m in sorted(usable, key=rank)]
+
+
+def find_screenscraper(title, platform, filename, config):
+    return screenscraper_image_urls(lookup_screenscraper_game(title, platform, filename, config))
+
+
+def _text(value):
+    """The string in a ScreenScraper value, which is either a bare string or `{"text": ...}`."""
+    if isinstance(value, dict):
+        value = value.get("text")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _entries(value):
+    return [entry for entry in value if isinstance(entry, dict)] if isinstance(value, list) else []
+
+
+def _localized(entries, key, preferred):
+    """The text of the entry whose `key` ("langue") ranks best in `preferred`; unlisted values
+    rank last, in payload order. Entries without text are ignored."""
+    entries = [e for e in _entries(entries) if _text(e)]
+    rank = lambda e: preferred.index(e.get(key)) if e.get(key) in preferred else len(preferred)
+    return _text(min(entries, key=rank)) if entries else ""
+
+
+def parse_screenscraper_metadata(jeu: dict) -> dict:
+    """Map a ScreenScraper `jeu` payload to ROM metadata fields (see `METADATA_FIELDS`).
+
+    Free text prefers English and dates prefer `SCREENSCRAPER_REGIONS` order; the `region` is that
+    of the chosen release date. Best effort: anything missing or malformed is omitted, and values
+    are clipped to their column width."""
+    from .models import ROM  # Deferred: this module is imported while settings load, before models can be.
+
+    jeu = jeu if isinstance(jeu, dict) else {}
+    metadata = {"description": _localized(jeu.get("synopsis"), "langue", SCREENSCRAPER_LANGUAGES)}
+
+    genres = []
+    for genre in _entries(jeu.get("genres")):
+        name = _localized(genre.get("noms"), "langue", SCREENSCRAPER_LANGUAGES)
+        if name and name not in genres:
+            genres.append(name)
+    metadata["genre"] = ", ".join(genres)
+
+    dates = [(d.get("region"), re.match(r"\d{4}", _text(d))) for d in _entries(jeu.get("dates"))]
+    dates = [(region, int(match.group())) for region, match in dates if match]
+    if dates:
+        unlisted = len(SCREENSCRAPER_REGIONS)
+        region, year = min(dates, key=lambda d: SCREENSCRAPER_REGIONS.index(d[0]) if d[0] in SCREENSCRAPER_REGIONS else unlisted)
+        metadata.update(release_year=year, region=region if isinstance(region, str) else "")
+
+    metadata["developer"] = _text(jeu.get("developpeur"))
+    metadata["publisher"] = _text(jeu.get("editeur"))
+    metadata["players"] = _text(jeu.get("joueurs"))
+    rating = _text(jeu.get("note"))  # ScreenScraper rates out of 20.
+    metadata["rating"] = f"{rating}/20" if re.fullmatch(r"\d+(\.\d+)?", rating) else ""
+
+    for field, value in metadata.items():
+        limit = getattr(ROM._meta.get_field(field), "max_length", None)
+        if limit and isinstance(value, str):
+            metadata[field] = value[:limit]
+    return {field: value for field, value in metadata.items() if value not in ("", None)}
+
+
+class ScreenScraperGame:
+    """Lazy, memoized ScreenScraper lookup for one ROM, so a scrape asks the API at most once for
+    both the cover and the metadata. A failed lookup is logged and reads as "no game"."""
+
+    def __init__(self, title, platform, filename, config):
+        self._args = (title, platform, filename, config)
+        self._looked_up = False
+        self._jeu = None
+
+    @property
+    def jeu(self):
+        if not self._looked_up:
+            self._looked_up = True
+            try:
+                self._jeu = lookup_screenscraper_game(*self._args)
+            except (requests.RequestException, ValueError) as exc:
+                logger.warning("Cover art provider %s failed for %r: %s", SCREENSCRAPER, self._args[0], exc)
+        return self._jeu
+
+    def image_urls(self):
+        return screenscraper_image_urls(self.jeu)
+
+    def metadata(self):
+        return parse_screenscraper_metadata(self.jeu)
 
 
 FINDERS = {LIBRETRO: find_libretro, SCREENSCRAPER: find_screenscraper}
@@ -312,13 +412,18 @@ def download_image(url, config):
         return (bytes(data), extension) if data else None
 
 
-def scrape_cover_art(title, platform, filename="", config=None):
+def scrape_cover_art(title, platform, filename="", config=None, screenscraper=None):
     """Try each configured provider in order. Returns `(image_bytes, extension, CoverArtResult)`
-    for the first image found, or None. A failing provider is logged and the next one tried."""
+    for the first image found, or None. A failing provider is logged and the next one tried.
+    Pass a `ScreenScraperGame` as `screenscraper` to share its lookup with the caller."""
     config = config or settings.COVER_ART
     for provider in config.providers:
         try:
-            for url in FINDERS[provider](title, platform, filename, config):
+            if provider == SCREENSCRAPER and screenscraper is not None:
+                urls = screenscraper.image_urls()
+            else:
+                urls = FINDERS[provider](title, platform, filename, config)
+            for url in urls:
                 image = download_image(url, config)
                 if image:
                     return image[0], image[1], CoverArtResult(image_url=url, source=provider)
@@ -328,18 +433,30 @@ def scrape_cover_art(title, platform, filename="", config=None):
 
 
 def fetch_cover_for_rom(rom, config=None) -> bool:
-    """Scrape cover art for `rom` and store it. Returns True if new art was saved."""
-    found = scrape_cover_art(rom.title, rom.platform, rom.file.name if rom.file else "", config)
-    if not found:
+    """Scrape cover art and, when ScreenScraper is configured, metadata for `rom` and store them.
+    Metadata comes from ScreenScraper whichever provider supplied the cover. Returns True if new
+    art was saved."""
+    config = config or settings.COVER_ART
+    filename = rom.file.name if rom.file else ""
+    game = ScreenScraperGame(rom.title, rom.platform, filename, config) if SCREENSCRAPER in config.providers else None
+    found = scrape_cover_art(rom.title, rom.platform, filename, config, screenscraper=game)
+    metadata = game.metadata() if game else {}
+    if not found and not metadata:
         return False
-    data, extension, result = found
-    old = rom.cover_art.name if rom.cover_art else ""
-    rom.cover_art.save(f"rom-{rom.pk}{extension}", ContentFile(data), save=False)
-    rom.cover_art_source = result.source
-    rom.save(update_fields=["cover_art", "cover_art_source"])
+    update_fields = list(metadata)
+    for field, value in metadata.items():
+        setattr(rom, field, value)
+    old = ""
+    if found:
+        data, extension, result = found
+        old = rom.cover_art.name if rom.cover_art else ""
+        rom.cover_art.save(f"rom-{rom.pk}{extension}", ContentFile(data), save=False)
+        rom.cover_art_source = result.source
+        update_fields += ["cover_art", "cover_art_source"]
+    rom.save(update_fields=update_fields)
     if old and old != rom.cover_art.name:
         rom.cover_art.storage.delete(old)
-    return True
+    return bool(found)
 
 
 def safe_fetch_cover_for_rom(rom) -> bool:

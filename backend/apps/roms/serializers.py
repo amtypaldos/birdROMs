@@ -3,6 +3,7 @@ from django.template.defaultfilters import filesizeformat
 from django.urls import reverse
 from rest_framework import serializers
 
+from .cover_art import METADATA_FIELDS
 from .models import ROM
 from .services import SUPPORTED_EXTENSIONS, get_extension
 
@@ -26,11 +27,12 @@ class ROMSerializer(serializers.ModelSerializer):
             "extension",
             "cover_art_url",
             "cover_art_source",
+            *METADATA_FIELDS,
             "uploaded_by",
             "uploaded_by_username",
             "uploaded_at",
         ]
-        read_only_fields = ["uploaded_by", "extension", "cover_art_source"]
+        read_only_fields = ["uploaded_by", "extension", "cover_art_source", *METADATA_FIELDS]
 
     def validate_file(self, file):
         # Uploads are untrusted: only known ROM/archive extensions, within the size cap.
