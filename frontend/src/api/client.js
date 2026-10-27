@@ -97,6 +97,25 @@ export const api = {
       body: JSON.stringify(payload)
     });
   },
+  // Approves a handheld's pairing code (from the QR link). Refusals (404 unknown, 410 expired, 409
+  // already approved) carry a DRF `{detail}` body; surface just that message.
+  async approveDevice(code) {
+    try {
+      return await request("/devices/pair/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code })
+      });
+    } catch (err) {
+      let message = String(err.message || err);
+      try {
+        message = JSON.parse(message).detail || message;
+      } catch {
+        // not a JSON body; keep the raw text
+      }
+      throw new Error(message);
+    }
+  },
   // Returns DRF's paginated envelope: { count, next, previous, results }.
   listRoms({ search = "", platform = "", page = 1 } = {}) {
     const params = new URLSearchParams();
