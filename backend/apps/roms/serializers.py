@@ -1,10 +1,11 @@
 from django.conf import settings
+from django.db import transaction
 from django.template.defaultfilters import filesizeformat
 from django.urls import reverse
 from rest_framework import serializers
 
 from .cover_art import METADATA_FIELDS
-from .models import ROM
+from .models import ROM, Playlist, PlaylistItem
 from .services import SUPPORTED_EXTENSIONS, get_extension
 
 
@@ -60,3 +61,56 @@ class ROMSerializer(serializers.ModelSerializer):
 
     def get_cover_art_url(self, obj):
         return self._api_url("rom-cover", obj) if obj.cover_art else None
+
+
+class PlaylistSerializer(serializers.ModelSerializer):
+    created_by_username = serializers.CharField(source="created_by.username", read_only=True)
+    rom_count = serializers.SerializerMethodField()
+    # Read: the playlist's ROMs, in playlist order. Write: `rom_ids` (below) replaces them.
+    roms = serializers.SerializerMethodField()
+    # Add, remove and reorder in one call: the list is the playlist's new order. Omit to leave
+    # the items untouched.
+    rom_ids = serializers.ListField(
+        child=serializers.PrimaryKeyRelatedField(queryset=ROM.objects.all()), write_only=True, required=False
+    )
+
+    class Meta:
+        model = Playlist
+        fields = ["id", "name", "created_by", "created_by_username", "created_at", "rom_count", "roms", "rom_ids"]
+        read_only_fields = ["created_by", "created_at"]
+
+    def get_rom_count(self, obj):
+        return len(obj.items.all())
+
+    def get_roms(self, obj):
+        # `items` is prefetched (with `rom`) by the viewset and ordered by `PlaylistItem.Meta`.
+        roms = [item.rom for item in obj.items.all()]
+        return ROMSerializer(roms, many=True, context=self.context).data
+
+    def validate_rom_ids(self, roms):
+        if len({rom.pk for rom in roms}) != len(roms):
+            raise serializers.ValidationError("A ROM can only appear once in a playlist.")
+        return roms
+
+    @transaction.atomic
+    def create(self, validated_data):
+        roms = validated_data.pop("rom_ids", [])
+        playlist = super().create(validated_data)
+        self._set_items(playlist, roms)
+        return playlist
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        roms = validated_data.pop("rom_ids", None)
+        playlist = super().update(instance, validated_data)
+        if roms is not None:
+            self._set_items(playlist, roms)
+        return playlist
+
+    def _set_items(self, playlist, roms):
+        playlist.items.all().delete()
+        PlaylistItem.objects.bulk_create(
+            PlaylistItem(playlist=playlist, rom=rom, order=order) for order, rom in enumerate(roms)
+        )
+        # Drop any prefetched items so the response reflects the new order.
+        getattr(playlist, "_prefetched_objects_cache", {}).pop("items", None)

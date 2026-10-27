@@ -2,12 +2,14 @@ from django.contrib import admin
 from django.urls import include, path
 
 from apps.accounts.urls import device_urlpatterns
+from apps.roms.urls import playlist_urlpatterns
 
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/auth/", include("apps.accounts.urls")),
     path("api/devices/", include(device_urlpatterns)),
     path("api/roms/", include("apps.roms.urls")),
+    path("api/playlists/", include(playlist_urlpatterns)),
 ]
 
 # MEDIA_ROOT is deliberately not served: ROMs are private and only reachable through the

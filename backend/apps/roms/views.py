@@ -10,10 +10,10 @@ from rest_framework.response import Response
 
 from birdroms.tasks import scrape_rom_cover
 
-from .models import ROM
+from .models import ROM, Playlist
 from .pagination import ROMPagination
-from .permissions import IsSuperAdminOrReadOnlyRole
-from .serializers import ROMSerializer
+from .permissions import IsPlaylistOwnerOrReadOnly, IsSuperAdminOrReadOnlyRole
+from .serializers import PlaylistSerializer, ROMSerializer
 from .cover_art import scrape_rom
 
 logger = logging.getLogger(__name__)
@@ -97,3 +97,13 @@ class ROMViewSet(viewsets.ModelViewSet):
         # backend (filesystem or S3) ever hands the client a permanent public URL.
         rom = self.get_object()
         return FileResponse(rom.file.open("rb"), as_attachment=True, filename=download_filename(rom))
+
+
+class PlaylistViewSet(viewsets.ModelViewSet):
+    # The library is shared, so every authenticated user sees every playlist; only the owner edits.
+    queryset = Playlist.objects.select_related("created_by").prefetch_related("items__rom__uploaded_by")
+    serializer_class = PlaylistSerializer
+    permission_classes = [IsPlaylistOwnerOrReadOnly]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
