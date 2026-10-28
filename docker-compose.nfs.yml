@@ -1,0 +1,23 @@
+# Optional override: keep the ROM library on an NFS share instead of a local volume.
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.nfs.yml up -d
+#
+# Set these in the shell or the repo-root .env (all required):
+#   BIRDROMS_NFS_ADDR     address of the NFS server, e.g. 192.168.1.20
+#   BIRDROMS_NFS_EXPORT   exported path that holds (or contains) the ROMS/ folder, e.g. /srv/roms
+# Optional:
+#   BIRDROMS_NFS_OPTS     extra mount options. Default: rw,nfsvers=4.1,hard,noatime
+#
+# The Docker host needs an NFS client (Debian/Ubuntu: apt install nfs-common). Docker mounts the
+# share when the containers start, so they refuse to start while the server is unreachable
+# instead of scanning an empty folder. The container user (uid 999) must be able to write to the
+# export, or set LIBRARY_READ_ONLY=true. Mount options are fixed when the volume is created; to
+# change them, stop the stack and `docker volume rm <project>_birdroms_library`.
+# See docs/deploying.md.
+volumes:
+  birdroms_library:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=${BIRDROMS_NFS_ADDR:?set BIRDROMS_NFS_ADDR},${BIRDROMS_NFS_OPTS:-rw,nfsvers=4.1,hard,noatime}"
+      device: ":${BIRDROMS_NFS_EXPORT:?set BIRDROMS_NFS_EXPORT}"

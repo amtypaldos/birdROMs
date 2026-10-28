@@ -91,3 +91,5 @@ jobs:
         run: docker build --target prod -t birdroms-backend:ci backend
       - name: Build frontend image
         run: docker build --target prod -t birdroms-web:ci frontend
+      - name: Validate compose files
+        run: scripts/check-compose.sh
