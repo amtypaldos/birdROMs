@@ -15,6 +15,7 @@ from .platform_aliases import UNSORTED_FOLDER, muos_folder_for
 from .services import SUPPORTED_EXTENSIONS, classify_platform_from_extension, get_extension, parse_rom_filename
 
 LIBRARY_UNAVAILABLE = "The ROM library is unavailable."
+FILE_REPLACE_REFUSED = "A ROM's file can't be replaced; upload it as a new file."
 CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 
@@ -70,10 +71,12 @@ class ROMSerializer(serializers.ModelSerializer):
         filename = clean_upload_name(upload.name)
         parsed = parse_rom_filename(filename)
         platform = validated_data.get("platform") or classify_platform_from_extension(filename)
-        folder = muos_folder_for(platform) or UNSORTED_FOLDER
+        folder = muos_folder_for(platform)
         library = get_library()
         try:
-            path = "/".join(part for part in (library.systems_prefix, folder, filename) if part)
+            systems = library.systems_prefix
+            folder = library.system_folder(systems, folder) if folder else UNSORTED_FOLDER
+            path = "/".join(part for part in (systems, folder, filename) if part)
         except LibraryUnavailable:
             raise serializers.ValidationError({"file": [LIBRARY_UNAVAILABLE]})
         # A row whose file vanished (flagged `missing` or not yet noticed by a scan) is restored by the upload rather than duplicated.
@@ -96,7 +99,7 @@ class ROMSerializer(serializers.ModelSerializer):
             platform=platform,
             source="upload",
             size_bytes=upload.size,
-            modified_at=timezone.now(),
+            modified_at=library.modified_time(path),  # what the next scan sees: no false "changed"
             missing=False,
             uploaded_at=timezone.now(),
         )
@@ -108,6 +111,9 @@ class ROMSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
     def validate_file(self, file):
+        # A stored file is never replaced (library files are only ever created, see `create`).
+        if self.instance is not None:
+            raise serializers.ValidationError(FILE_REPLACE_REFUSED)
         # Uploads are untrusted: only known ROM/archive extensions, within the size cap.
         # Empty files are already rejected by FileField (allow_empty_file=False).
         extension = get_extension(file.name)
