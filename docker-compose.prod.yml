@@ -36,7 +36,7 @@ x-backend-common: &backend-common
     # (e.g. /mnt/roms:/data/media) or an NFS-backed named volume.
     - birdroms_media:/data/media
     # The ROM library, shared so the worker's scheduled scans see what the backend sees. The
-    # app user (uid 999) needs write access: on NFS set the export's ownership accordingly, or
+    # app user (uid 568) needs write access: on NFS set the export's ownership accordingly, or
     # set LIBRARY_READ_ONLY=true. Upgrading? See docs/upgrading-to-the-library.md.
     - birdroms_library:/library
 
