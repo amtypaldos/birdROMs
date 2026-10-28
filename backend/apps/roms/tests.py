@@ -54,6 +54,7 @@ from .cover_art import _title_candidates, _without_dedup_suffix
 from .models import ROM, Playlist, PlaylistItem
 from .services import (
     EXTENSION_TO_PLATFORM,
+    ParsedName,
     SUPPORTED_EXTENSIONS,
     SUPPORTED_PLATFORMS,
     UNKNOWN_PLATFORM,
@@ -299,6 +300,19 @@ class ParseRomFilenameTests(SimpleTestCase):
                 parsed = parse_rom_filename(name)
                 self.assertEqual(parsed.title, title)
                 self.assertEqual(parsed.tags, tags)
+
+    def test_strips_every_extension_the_scanner_imports(self):
+        cases = [
+            ("Stone of Wisdom, The (Japan).rom", "The Stone of Wisdom", ("Japan",)),
+            ("Togepi no Daibouken (Japan) (Preview).min", "Togepi no Daibouken", ("Japan", "Preview")),
+            ("Celeste Classic.p8", "Celeste Classic", ()),
+            ("Ball (Game & Watch).mgw", "Ball", ("Game & Watch",)),
+            ("Mario's Tennis (Japan, USA).vb", "Mario's Tennis", ("Japan, USA",)),
+            ("Some Port (Unl).pak", "Some Port", ("Unlicensed",)),
+        ]
+        for name, title, tags in cases:
+            with self.subTest(name=name):
+                self.assertEqual(parse_rom_filename(name), ParsedName(title=title, tags=tags))
 
     def test_trailing_article_variants(self):
         self.assertEqual(parse_rom_filename("Game, A.nes").title, "A Game")
