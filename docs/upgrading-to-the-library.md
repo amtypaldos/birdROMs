@@ -47,8 +47,9 @@ choose otherwise (for example `LIBRARY_BACKEND=filesystem` with `LIBRARY_ROOT`).
   with
   `docker compose -f docker-compose.prod.yml run --rm --no-deps --user root backend chown -R 568:568 /library`,
   or remove the volume and let Compose recreate it (only if it holds nothing you need).
-- The app user changed from uid/gid 999 to 568 (TrueNAS's `apps` account; build with
-  `--build-arg APP_UID=... --build-arg APP_GID=...` to pick another). Volumes written by an older
+- The app user changed from uid/gid 999 to 568 (TrueNAS's `apps` account). Pick another at
+  runtime with `PUID`/`PGID` in `backend/.env` (or compose `user:`); `PUID=999 PGID=999` keeps
+  the old owner and needs no chown. Volumes written by an older
   image are owned by 999: give them to the new user once with
   `docker compose -f docker-compose.prod.yml run --rm --no-deps --user root backend chown -R 568:568 /data/media /library`.
 - For a library on an NFS share, uid 568 needs write access to the export. If you don't want
