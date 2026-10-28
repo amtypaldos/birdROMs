@@ -150,6 +150,30 @@ export const api = {
       return false;
     }
   },
+  listPlaylists() {
+    return request("/playlists/");
+  },
+  getPlaylist(id) {
+    return request(`/playlists/${id}/`);
+  },
+  createPlaylist(payload) {
+    return request("/playlists/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+  },
+  // `rom_ids`, when sent, is the full new ordered list (it replaces the playlist's contents).
+  updatePlaylist(id, payload) {
+    return request(`/playlists/${id}/`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+  },
+  deletePlaylist(id) {
+    return request(`/playlists/${id}/`, { method: "DELETE" });
+  },
   // ROMs are private: fetch through the authenticated endpoint, then save the blob locally.
   async downloadRom(rom) {
     const response = await rawRequest(`/roms/${rom.id}/download/`);
