@@ -54,6 +54,17 @@ describe("App", () => {
     expect(screen.queryByRole("heading", { name: "Login" })).not.toBeInTheDocument();
   });
 
+  it("logs out when the sign-in check is rejected with an HTTP error (401)", async () => {
+    getToken.mockReturnValue("stale");
+    api.me.mockRejectedValueOnce(new Error('{"detail":"Invalid token."}'));
+
+    render(<App />);
+
+    await waitFor(() => expect(setToken).toHaveBeenCalledWith(null));
+    expect(await screen.findByRole("heading", { name: "Login" })).toBeInTheDocument();
+    expect(screen.queryByText(/You're offline/)).not.toBeInTheDocument();
+  });
+
   it("clears the offline notice and reloads when the connection comes back", async () => {
     getToken.mockReturnValue("abc123");
     api.listRoms.mockRejectedValueOnce(offlineError());
