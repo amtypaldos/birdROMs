@@ -1287,7 +1287,7 @@ class DeviceListingTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         rows = {row["id"]: row for row in response.data["results"]}
-        self.assertEqual(set(rows[with_cover.pk]), {"id", "title", "platform", "extension", "size_bytes", "cover_url"})
+        self.assertEqual(set(rows[with_cover.pk]), {"id", "title", "platform", "extension", "size_bytes", "cover_url", "filename", "tags"})
         self.assertEqual(rows[with_cover.pk]["title"], "Zelda")
         self.assertEqual(rows[with_cover.pk]["platform"], "NES")
         self.assertEqual(rows[with_cover.pk]["extension"], ".nes")
@@ -1691,7 +1691,7 @@ class PlaylistTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         first, second = response.data["roms"]
         self.assertEqual([first["id"], second["id"]], [covered.pk, self.rom_a.pk])
-        device_shape = {"id", "title", "platform", "extension", "size_bytes", "cover_url"}
+        device_shape = {"id", "title", "platform", "extension", "size_bytes", "cover_url", "filename", "tags"}
         self.assertEqual(set(first), device_shape)
         self.assertEqual(set(second), device_shape)
         self.assertEqual(first["size_bytes"], 16)
@@ -1742,3 +1742,91 @@ class PlaylistTests(APITestCase):
         response = self.client.get(reverse("playlist-detail", args=[playlist.pk]))
 
         self.assertEqual([rom["id"] for rom in response.data["roms"]], [self.rom_b.pk])
+
+
+class FilenameAndTagsTests(APITestCase):
+    list_url = reverse("rom-list")
+    NAME = "Bomberman 64 (U) [!].z64"
+
+    def setUp(self):
+        self.admin = make_user("admin", "super_admin")
+        self.client.force_authenticate(self.admin)
+
+    def upload(self, name=NAME, **extra):
+        return self.client.post(self.list_url, {"file": dummy_rom(name), **extra}, format="multipart")
+
+    def test_upload_without_title_derives_title_filename_and_tags(self):
+        response = self.upload()
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["title"], "Bomberman 64")
+        self.assertEqual(response.data["filename"], self.NAME)
+        self.assertEqual(response.data["tags"], ["USA", "Verified good dump"])
+        rom = ROM.objects.get()
+        self.assertEqual((rom.filename, rom.tags), (self.NAME, ["USA", "Verified good dump"]))
+
+    def test_supplied_title_is_kept(self):
+        response = self.upload(title="  My Name ")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["title"], "My Name")
+        self.assertEqual(response.data["filename"], self.NAME)
+        self.assertEqual(response.data["tags"], ["USA", "Verified good dump"])
+
+    def test_blank_title_is_derived(self):
+        response = self.upload(title="   ")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["title"], "Bomberman 64")
+
+    def test_filename_is_sanitized_and_truncated_keeping_extension(self):
+        long_name = "a" * 300 + ".nes"
+        response = self.upload(long_name)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(len(response.data["filename"]), 255)
+        self.assertTrue(response.data["filename"].endswith(".nes"))
+        self.assertLessEqual(len(response.data["title"]), 255)
+
+    def test_filename_drops_control_characters(self):
+        response = self.upload("a\x01b.nes")
+
+        self.assertEqual(response.data["filename"], "ab.nes")
+
+    def test_patch_changes_only_the_title(self):
+        rom_id = self.upload().data["id"]
+        url = reverse("rom-detail", args=[rom_id])
+
+        response = self.client.patch(url, {"title": "Renamed", "filename": "x.z64", "tags": ["Hacked"]}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        rom = ROM.objects.get(pk=rom_id)
+        self.assertEqual(rom.title, "Renamed")
+        self.assertEqual(rom.filename, self.NAME)
+        self.assertEqual(rom.tags, ["USA", "Verified good dump"])
+
+    def test_device_listing_includes_filename_and_tags(self):
+        self.upload()
+
+        response = self.client.get(self.list_url, {"fields": "device"})
+
+        row = response.data["results"][0]
+        self.assertEqual(row["filename"], self.NAME)
+        self.assertEqual(row["tags"], ["USA", "Verified good dump"])
+
+    def test_playlist_detail_includes_filename_and_tags(self):
+        rom_id = self.upload().data["id"]
+        playlist = Playlist.objects.create(name="P", created_by=self.admin)
+        PlaylistItem.objects.create(playlist=playlist, rom_id=rom_id, order=0)
+
+        response = self.client.get(reverse("playlist-detail", args=[playlist.pk]))
+
+        self.assertEqual(response.data["roms"][0]["filename"], self.NAME)
+        self.assertEqual(response.data["roms"][0]["tags"], ["USA", "Verified good dump"])
+
+    def test_search_matches_the_filename(self):
+        self.upload()
+
+        response = self.client.get(self.list_url, {"search": "(U)"})
+
+        self.assertEqual(response.data["count"], 1)

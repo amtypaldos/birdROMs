@@ -1,3 +1,6 @@
+import os
+import re
+
 from django.conf import settings
 from django.db import transaction
 from django.template.defaultfilters import filesizeformat
@@ -6,7 +9,19 @@ from rest_framework import serializers
 
 from .cover_art import METADATA_FIELDS
 from .models import ROM, Playlist, PlaylistItem
-from .services import SUPPORTED_EXTENSIONS, get_extension
+from .services import SUPPORTED_EXTENSIONS, get_extension, parse_rom_filename
+
+CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def clean_upload_name(name):
+    """The uploaded file's own name, safe to store and send back: no path, control chars or separators."""
+    name = CONTROL_CHARS.sub("", os.path.basename(name))
+    name = name.replace("/", "_").replace("\\", "_").strip()
+    if len(name) > 255:
+        stem, extension = os.path.splitext(name)
+        name = stem[: 255 - len(extension)] + extension
+    return name
 
 
 class ROMSerializer(serializers.ModelSerializer):
@@ -23,6 +38,8 @@ class ROMSerializer(serializers.ModelSerializer):
             "id",
             "title",
             "platform",
+            "filename",
+            "tags",
             "file",
             "download_url",
             "extension",
@@ -33,7 +50,16 @@ class ROMSerializer(serializers.ModelSerializer):
             "uploaded_by_username",
             "uploaded_at",
         ]
-        read_only_fields = ["uploaded_by", "extension", "cover_art_source", *METADATA_FIELDS]
+        read_only_fields = ["uploaded_by", "extension", "filename", "tags", "cover_art_source", *METADATA_FIELDS]
+        extra_kwargs = {"title": {"required": False, "allow_blank": True}}
+
+    def create(self, validated_data):
+        filename = clean_upload_name(validated_data["file"].name)
+        parsed = parse_rom_filename(filename)
+        validated_data["filename"] = filename
+        validated_data["tags"] = list(parsed.tags)
+        validated_data["title"] = (validated_data.get("title") or "").strip() or parsed.title[:255]
+        return super().create(validated_data)
 
     def validate_file(self, file):
         # Uploads are untrusted: only known ROM/archive extensions, within the size cap.
@@ -72,7 +98,7 @@ class DeviceROMSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ROM
-        fields = ["id", "title", "platform", "extension", "size_bytes", "cover_url"]
+        fields = ["id", "title", "platform", "extension", "size_bytes", "cover_url", "filename", "tags"]
         read_only_fields = fields
 
     def get_size_bytes(self, obj):

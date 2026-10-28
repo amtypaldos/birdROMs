@@ -8,6 +8,10 @@ class ROM(models.Model):
     title = models.CharField(max_length=255)
     platform = models.CharField(max_length=120, blank=True)
     file = models.FileField(upload_to="roms/")
+    # Original upload name; every download uses it (saves and box art key off the file name).
+    filename = models.CharField(max_length=255, blank=True, default="")
+    # Region / dump tags parsed from the file name, e.g. ["USA", "Verified good dump"].
+    tags = models.JSONField(default=list, blank=True)
     extension = models.CharField(max_length=20, blank=True)
     # Scraped cover image, stored in the configured storage (served via /api/roms/{id}/cover/).
     cover_art = models.FileField(upload_to="covers/", blank=True)

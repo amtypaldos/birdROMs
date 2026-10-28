@@ -3,7 +3,7 @@ import mimetypes
 import re
 from pathlib import PurePosixPath
 
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.http import FileResponse, Http404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -54,7 +54,7 @@ class ROMViewSet(viewsets.ModelViewSet):
         search = self.request.query_params.get("search", "").strip()
         platform = self.request.query_params.get("platform", "").strip()
         if search:
-            queryset = queryset.filter(title__icontains=search)
+            queryset = queryset.filter(Q(title__icontains=search) | Q(filename__icontains=search))
         if platform:
             queryset = queryset.filter(platform=platform)
         return queryset
