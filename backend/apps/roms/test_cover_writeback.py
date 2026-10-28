@@ -66,6 +66,19 @@ class CoverWritebackTests(LibraryRootTestCase):
         self.assertEqual(self.rom.cover_path, IMG)
         self.assertTrue(self.rom.cover_art)
 
+    def test_existing_lowercase_folder_is_used(self):
+        self.put("ROMS/SFC/imgs/Other.png", PNG_SIGNATURE)
+        self.scrape()
+        self.assertTrue((self.root / "ROMS/SFC/imgs/Game (USA).png").read_bytes().startswith(PNG_SIGNATURE))
+        self.assertEqual(self.rom.cover_path, "ROMS/SFC/imgs/Game (USA).png")
+        self.assertEqual([p.name for p in (self.root / "ROMS/SFC").iterdir() if p.is_dir()], ["imgs"])
+
+    def test_existing_uppercase_extension_is_linked(self):
+        self.put("ROMS/SFC/Imgs/game (usa).PNG", b"existing")
+        self.scrape()
+        self.assertEqual(self.rom.cover_path, "ROMS/SFC/Imgs/game (usa).PNG")
+        self.assertEqual([p.name for p in (self.root / "ROMS/SFC/Imgs").iterdir()], ["game (usa).PNG"])
+
     def test_write_covers_off_writes_nothing(self):
         library = parse_library_settings({"LIBRARY_ROOT": str(self.root), "LIBRARY_WRITE_COVERS": "false"})
         with override_settings(LIBRARY=library):
