@@ -109,6 +109,7 @@ function RomPicker({ existingIds, onAdd, onClose }) {
         <button type="submit" className="primary">Search</button>
       </form>
       {error ? <p className="error" role="alert">{error}</p> : null}
+      {!romPage && !error ? <p className="muted loading-text">Loading…</p> : null}
       {romPage && results.length === 0 ? <p className="muted">No ROMs found.</p> : null}
       <ul className="picker-list" aria-label="Library ROMs">
         {results.map((rom) => {
@@ -122,7 +123,7 @@ function RomPicker({ existingIds, onAdd, onClose }) {
                   disabled={already}
                   onChange={() => toggle(rom)}
                 />
-                <span>{rom.title}</span>
+                <span className="picker-title" title={rom.title}>{rom.title}</span>
               </label>
               <span className="muted picker-meta">
                 {[rom.platform, ...(Array.isArray(rom.tags) ? rom.tags : [])].filter(Boolean).join(" · ")}

@@ -167,6 +167,23 @@ describe("PlaylistsView detail (owner)", () => {
     expect(api.coverObjectUrl).toHaveBeenCalledWith({ id: 7 });
   });
 
+  it("labels each picker checkbox with its ROM title and shows loading first", async () => {
+    await openDetail(detail([]));
+    let resolve;
+    api.listRoms.mockReturnValue(new Promise((r) => (resolve = r)));
+
+    fireEvent.click(screen.getByRole("button", { name: "Add ROMs" }));
+    const picker = await screen.findByRole("dialog", { name: "Add ROMs" });
+    expect(within(picker).getByText("Loading…")).toBeInTheDocument();
+    expect(within(picker).queryByText("No ROMs found.")).not.toBeInTheDocument();
+
+    resolve(romPage([rom(7, "Donkey Kong 64"), rom(8, "Delta")]));
+    const box = await within(picker).findByRole("checkbox", { name: "Donkey Kong 64" });
+    expect(box.closest("label")).toHaveTextContent("Donkey Kong 64");
+    expect(within(picker).getByRole("checkbox", { name: "Delta" })).toBeInTheDocument();
+    expect(within(picker).queryByText("Loading…")).not.toBeInTheDocument();
+  });
+
   it("searches in the picker", async () => {
     await openDetail(detail([]));
     fireEvent.click(screen.getByRole("button", { name: "Add ROMs" }));

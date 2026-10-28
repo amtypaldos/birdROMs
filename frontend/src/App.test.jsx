@@ -652,6 +652,28 @@ describe("App playlists", () => {
     expect(window.location.hash).toBe("");
   });
 
+  it("marks the tab of the view being shown as current, also after hash changes", async () => {
+    getToken.mockReturnValue("abc123");
+    render(<App />);
+    const library = await screen.findByRole("button", { name: "Library" });
+    const playlists = screen.getByRole("button", { name: "Playlists" });
+    expect(library).toHaveAttribute("aria-current", "page");
+    expect(playlists).not.toHaveAttribute("aria-current");
+
+    fireEvent.click(playlists);
+    expect(await screen.findByRole("heading", { name: "Playlists" })).toBeInTheDocument();
+    expect(playlists).toHaveAttribute("aria-current", "page");
+    expect(library).not.toHaveAttribute("aria-current");
+
+    act(() => {
+      window.location.hash = "";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(await screen.findByRole("heading", { name: "ROM Library" })).toBeInTheDocument();
+    expect(library).toHaveAttribute("aria-current", "page");
+    expect(playlists).not.toHaveAttribute("aria-current");
+  });
+
   it("opens straight to playlists from #/playlists", async () => {
     window.history.replaceState(null, "", "/#/playlists");
     getToken.mockReturnValue("abc123");
