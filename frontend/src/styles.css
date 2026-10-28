@@ -595,6 +595,16 @@ select:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.rom-tags {
+  width: 100%;
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .platform-badge {
   max-width: 100%;
   padding: 0.1rem 0.5rem;

@@ -91,7 +91,6 @@ function AuthPanel({ config, onAuthed }) {
 }
 
 function UploadPanel({ onUploaded }) {
-  const [title, setTitle] = useState("");
   const [file, setFile] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -101,12 +100,10 @@ function UploadPanel({ onUploaded }) {
     event.preventDefault();
     if (!file || busy) return;
     const formData = new FormData();
-    formData.append("title", title || file.name);
     formData.append("file", file);
     setBusy(true);
     try {
       await api.createRom(formData);
-      setTitle("");
       setFile(null);
       if (fileInput.current) fileInput.current.value = "";
       setError("");
@@ -122,12 +119,6 @@ function UploadPanel({ onUploaded }) {
     <section className="card upload-card">
       <h2>Upload ROM</h2>
       <form className="upload-form" onSubmit={handleUpload}>
-        <input
-          aria-label="ROM title"
-          placeholder="ROM title"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-        />
         <input
           ref={fileInput}
           aria-label="ROM file"
@@ -180,7 +171,6 @@ function GlobalDropzone({ onUploaded }) {
         if (!mounted.current) return;
         setStatus(id, { status: "uploading" });
         const formData = new FormData();
-        formData.append("title", file.name);
         formData.append("file", file);
         try {
           await api.createRom(formData);
@@ -415,7 +405,10 @@ function RomCard({ rom, onScrape, onDownload }) {
     <li className="rom-card" data-family={family}>
       <CoverImage rom={rom} />
       <div className="rom-body">
-        <h3 className="rom-title" title={rom.title}>{rom.title}</h3>
+        <h3 className="rom-title" title={rom.filename || rom.title}>{rom.title}</h3>
+        {Array.isArray(rom.tags) && rom.tags.length > 0 ? (
+          <p className="rom-tags">{rom.tags.join(" · ")}</p>
+        ) : null}
         <span className="platform-badge">{rom.platform || "Unknown"}</span>
       </div>
       <div className="rom-actions">

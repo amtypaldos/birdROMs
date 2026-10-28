@@ -1,3 +1,4 @@
+import importlib
 from difflib import SequenceMatcher
 from html import escape
 from io import StringIO
@@ -7,6 +8,8 @@ from urllib.parse import quote
 
 import requests
 
+from django.apps import apps as django_apps
+from django.contrib import admin
 from django.conf import settings
 from django.core.cache import cache
 from django.contrib.auth.models import Group, User
@@ -41,7 +44,10 @@ from .cover_art import (
     normalize_title,
     parse_cover_art_settings,
     parse_screenscraper_metadata,
+    scrape_rom,
 )
+from .admin import ROMAdmin
+from .cover_art import _title_candidates, _without_dedup_suffix
 from .models import ROM, Playlist, PlaylistItem
 from .services import (
     EXTENSION_TO_PLATFORM,
@@ -49,6 +55,7 @@ from .services import (
     SUPPORTED_PLATFORMS,
     UNKNOWN_PLATFORM,
     classify_platform_from_extension,
+    parse_rom_filename,
 )
 
 
@@ -236,6 +243,54 @@ class NormalizeTitleTests(SimpleTestCase):
         self.assertEqual(normalize_title("Mario & Luigi_ Superstar Saga"), "mario luigi superstar saga")
         # No-Intro files articles at the end: "Legend of Zelda, The".
         self.assertEqual(normalize_title("Legend of Zelda, The (USA)"), "the legend of zelda")
+
+
+    def test_clean_title_matches_tagged_title(self):
+        self.assertEqual(normalize_title("Bomberman 64"), normalize_title("Bomberman 64 (U) [!]"))
+
+
+class ParseRomFilenameTests(SimpleTestCase):
+    CASES = [
+        ("Bomberman 64 (U) [!].z64", "Bomberman 64", ("USA", "Verified good dump")),
+        ("Donkey Kong 64 (U) [!].z64.z64", "Donkey Kong 64", ("USA", "Verified good dump")),
+        ("6111 - Pokemon Black 2 (US) (frieNDS).nds", "Pokemon Black 2", ("USA", "frieNDS")),
+        ("1943 - The Battle of Midway (USA).nes", "1943 - The Battle of Midway", ("USA",)),
+        (
+            "Legend of Zelda, The - The Minish Cap (USA).gba",
+            "The Legend of Zelda - The Minish Cap",
+            ("USA",),
+        ),
+        ("Super_Mario_World.sfc", "Super Mario World", ()),
+        ("Sonic the Hedgehog 2 (World) (Rev A).md", "Sonic the Hedgehog 2", ("World", "Rev A")),
+        ("Pokemon - Emerald Version (USA, Europe).gba", "Pokemon - Emerald Version", ("USA, Europe",)),
+        ("Some Game (Europe) (En,Fr,De) (Beta).gba", "Some Game", ("Europe", "En, Fr, De", "Beta")),
+        ("Hack Game (U) [h1C] [T+Eng1.0].nes", "Hack Game", ("USA", "Hack", "Translation")),
+        ("Proto Thing (Japan) (Proto) (Unl).gb", "Proto Thing", ("Japan", "Prototype", "Unlicensed")),
+        ("Duplicate (USA) (USA).gba", "Duplicate", ("USA",)),
+        ("(Beta).gba", "(Beta)", ("Beta",)),
+        ("Dr. Mario", "Dr. Mario", ()),
+        ("Bomberman 64 (U) [!]", "Bomberman 64", ("USA", "Verified good dump")),
+    ]
+
+    def test_required_cases(self):
+        for name, title, tags in self.CASES:
+            with self.subTest(name=name):
+                parsed = parse_rom_filename(name)
+                self.assertEqual(parsed.title, title)
+                self.assertEqual(parsed.tags, tags)
+
+    def test_trailing_article_variants(self):
+        self.assertEqual(parse_rom_filename("Game, A.nes").title, "A Game")
+        self.assertEqual(parse_rom_filename("Thing, An (USA).nes").title, "An Thing")
+
+    def test_empty_title_falls_back_to_stem_then_name(self):
+        self.assertEqual(parse_rom_filename("  .gba").title, ".gba")
+
+    def test_bracket_flags(self):
+        parsed = parse_rom_filename("X [a] [b1] [f] [o] [p] [t2] [weird].nes")
+        self.assertEqual(
+            parsed.tags, ("Alternate", "Bad dump", "Fixed", "Overdump", "Pirate", "Trained", "weird")
+        )
 
 
 class BestLibretroNameTests(SimpleTestCase):
@@ -727,6 +782,37 @@ class CoverArtScrapeTests(APITestCase):
         self.assertIn(self.client.get(url).status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
 
 
+class ScrapeRomFilenameTests(APITestCase):
+    def make_rom(self, **kwargs):
+        user = make_user("uploader", "super_admin")
+        return ROM.objects.create(
+            title="Bomberman 64", platform="N64", file=dummy_rom("bomberman.z64"), uploaded_by=user, **kwargs
+        )
+
+    def scraped_filename(self, rom):
+        with mock.patch("apps.roms.cover_art.scrape_cover_art", return_value=None) as scrape:
+            scrape_rom(rom, BOTH_PROVIDERS)
+        return scrape.call_args.args[2]
+
+    def test_passes_original_filename_when_set(self):
+        rom = self.make_rom(filename="Bomberman 64 (U) [!].z64")
+        self.assertEqual(self.scraped_filename(rom), "Bomberman 64 (U) [!].z64")
+
+    def test_falls_back_to_storage_name_when_blank(self):
+        rom = self.make_rom()
+        self.assertEqual(self.scraped_filename(rom), _without_dedup_suffix(rom.file.name))
+
+    def test_original_filename_keeps_a_seven_char_tail(self):
+        rom = self.make_rom(filename="Pokemon_Emerald.gba")
+        filename = self.scraped_filename(rom)
+        self.assertIn("Pokemon_Emerald", _title_candidates(rom.title, filename))
+
+    def test_storage_name_loses_its_dedup_suffix(self):
+        rom = self.make_rom()
+        rom.file.name = "roms/zelda_OvlBGqX.gba"
+        self.assertEqual(self.scraped_filename(rom), "roms/zelda.gba")
+
+
 class ScrapeCoverTaskTests(APITestCase):
     list_url = reverse("rom-list")
 
@@ -1019,6 +1105,24 @@ class ROMDownloadTests(APITestCase):
         response = self.client.get(self.url)
         self.assertIn('filename=".._etc_passwd.nes"', response["Content-Disposition"])
 
+    def test_download_uses_original_filename(self):
+        self.rom.title = "Bomberman 64"
+        self.rom.filename = "Bomberman 64 (U) [!].z64"
+        self.rom.save()
+        self.client.force_authenticate(self.admin_user)
+        response = self.client.get(self.url)
+        self.assertIn('filename="Bomberman 64 (U) [!].z64"', response["Content-Disposition"])
+
+    def test_download_original_filename_is_sanitized(self):
+        self.rom.filename = "Evil\r\nGame/x\\y.nes"
+        self.rom.save()
+        self.client.force_authenticate(self.admin_user)
+        response = self.client.get(self.url)
+        self.assertIn('filename="EvilGame_x_y.nes"', response["Content-Disposition"])
+        for value in response.headers.values():
+            self.assertNotIn("\n", value)
+            self.assertNotIn("\r", value)
+
     def test_unknown_id_returns_404(self):
         self.client.force_authenticate(self.admin_user)
         response = self.client.get(reverse("rom-download", args=[self.rom.pk + 999]))
@@ -1246,7 +1350,7 @@ class DeviceListingTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         rows = {row["id"]: row for row in response.data["results"]}
-        self.assertEqual(set(rows[with_cover.pk]), {"id", "title", "platform", "extension", "size_bytes", "cover_url"})
+        self.assertEqual(set(rows[with_cover.pk]), {"id", "title", "platform", "extension", "size_bytes", "cover_url", "filename", "tags"})
         self.assertEqual(rows[with_cover.pk]["title"], "Zelda")
         self.assertEqual(rows[with_cover.pk]["platform"], "NES")
         self.assertEqual(rows[with_cover.pk]["extension"], ".nes")
@@ -1306,6 +1410,13 @@ class DeviceListingTests(APITestCase):
 
 class ROMAdminTests(TestCase):
     changelist_url = "/admin/roms/rom/"
+
+    def test_filename_and_tags_are_read_only_and_filename_searchable(self):
+        model_admin = ROMAdmin(ROM, admin.site)
+        readonly = model_admin.get_readonly_fields(None)
+        self.assertIn("filename", readonly)
+        self.assertIn("tags", readonly)
+        self.assertIn("filename", model_admin.search_fields)
 
     def setUp(self):
         self.superuser = User.objects.create_superuser("root", "root@example.com", "test-pass-123")
@@ -1650,7 +1761,7 @@ class PlaylistTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         first, second = response.data["roms"]
         self.assertEqual([first["id"], second["id"]], [covered.pk, self.rom_a.pk])
-        device_shape = {"id", "title", "platform", "extension", "size_bytes", "cover_url"}
+        device_shape = {"id", "title", "platform", "extension", "size_bytes", "cover_url", "filename", "tags"}
         self.assertEqual(set(first), device_shape)
         self.assertEqual(set(second), device_shape)
         self.assertEqual(first["size_bytes"], 16)
@@ -1701,3 +1812,160 @@ class PlaylistTests(APITestCase):
         response = self.client.get(reverse("playlist-detail", args=[playlist.pk]))
 
         self.assertEqual([rom["id"] for rom in response.data["roms"]], [self.rom_b.pk])
+
+
+class FilenameAndTagsTests(APITestCase):
+    list_url = reverse("rom-list")
+    NAME = "Bomberman 64 (U) [!].z64"
+
+    def setUp(self):
+        self.admin = make_user("admin", "super_admin")
+        self.client.force_authenticate(self.admin)
+
+    def upload(self, name=NAME, **extra):
+        return self.client.post(self.list_url, {"file": dummy_rom(name), **extra}, format="multipart")
+
+    def test_upload_without_title_derives_title_filename_and_tags(self):
+        response = self.upload()
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["title"], "Bomberman 64")
+        self.assertEqual(response.data["filename"], self.NAME)
+        self.assertEqual(response.data["tags"], ["USA", "Verified good dump"])
+        rom = ROM.objects.get()
+        self.assertEqual((rom.filename, rom.tags), (self.NAME, ["USA", "Verified good dump"]))
+
+    def test_supplied_title_is_kept(self):
+        response = self.upload(title="  My Name ")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["title"], "My Name")
+        self.assertEqual(response.data["filename"], self.NAME)
+        self.assertEqual(response.data["tags"], ["USA", "Verified good dump"])
+
+    def test_blank_title_is_derived(self):
+        response = self.upload(title="   ")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["title"], "Bomberman 64")
+
+    def test_filename_is_sanitized_and_truncated_keeping_extension(self):
+        long_name = "a" * 300 + ".nes"
+        response = self.upload(long_name)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(len(response.data["filename"]), 255)
+        self.assertTrue(response.data["filename"].endswith(".nes"))
+        self.assertLessEqual(len(response.data["title"]), 255)
+
+    def test_filename_drops_control_characters(self):
+        response = self.upload("a\x01b.nes")
+
+        self.assertEqual(response.data["filename"], "ab.nes")
+
+    def test_patch_changes_only_the_title(self):
+        rom_id = self.upload().data["id"]
+        url = reverse("rom-detail", args=[rom_id])
+
+        response = self.client.patch(url, {"title": "Renamed", "filename": "x.z64", "tags": ["Hacked"]}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        rom = ROM.objects.get(pk=rom_id)
+        self.assertEqual(rom.title, "Renamed")
+        self.assertEqual(rom.filename, self.NAME)
+        self.assertEqual(rom.tags, ["USA", "Verified good dump"])
+
+    def test_blank_title_is_rejected_when_editing(self):
+        rom_id = self.upload().data["id"]
+        url = reverse("rom-detail", args=[rom_id])
+
+        response = self.client.patch(url, {"title": ""}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(ROM.objects.get(pk=rom_id).title, "Bomberman 64")
+
+    def test_device_listing_includes_filename_and_tags(self):
+        self.upload()
+
+        response = self.client.get(self.list_url, {"fields": "device"})
+
+        row = response.data["results"][0]
+        self.assertEqual(row["filename"], self.NAME)
+        self.assertEqual(row["tags"], ["USA", "Verified good dump"])
+
+    def test_playlist_detail_includes_filename_and_tags(self):
+        rom_id = self.upload().data["id"]
+        playlist = Playlist.objects.create(name="P", created_by=self.admin)
+        PlaylistItem.objects.create(playlist=playlist, rom_id=rom_id, order=0)
+
+        response = self.client.get(reverse("playlist-detail", args=[playlist.pk]))
+
+        self.assertEqual(response.data["roms"][0]["filename"], self.NAME)
+        self.assertEqual(response.data["roms"][0]["tags"], ["USA", "Verified good dump"])
+
+    def test_search_matches_the_filename(self):
+        self.upload()
+
+        response = self.client.get(self.list_url, {"search": "(U)"})
+
+        self.assertEqual(response.data["count"], 1)
+
+
+class BackfillMigrationTests(TestCase):
+    def setUp(self):
+        self.user = make_user("backfiller", "super_admin")
+        migration = importlib.import_module("apps.roms.migrations.0006_backfill_rom_filenames")
+        self.backfill = migration.backfill
+        self.restore = migration.restore
+
+    def legacy_rom(self, title, stored_name):
+        return ROM.objects.create(title=title, file=dummy_rom(stored_name), uploaded_by=self.user, filename="")
+
+    def test_backfill_cleans_title_when_title_already_has_extension(self):
+        rom = self.legacy_rom("6111 - Pokemon Black 2 (US) (frieNDS).nds", "pokemon.nds")
+
+        self.backfill(django_apps, None)
+
+        rom.refresh_from_db()
+        self.assertEqual(rom.filename, "6111 - Pokemon Black 2 (US) (frieNDS).nds")
+        self.assertEqual(rom.title, "Pokemon Black 2")
+        self.assertEqual(rom.tags, ["USA", "frieNDS"])
+
+    def test_backfill_appends_extension_when_title_lacks_it(self):
+        rom = self.legacy_rom("Bomberman 64 (U) [!]", "bomberman.z64")
+
+        self.backfill(django_apps, None)
+
+        rom.refresh_from_db()
+        self.assertEqual(rom.filename, "Bomberman 64 (U) [!].z64")
+        self.assertEqual(rom.title, "Bomberman 64")
+
+    def test_backfill_leaves_rows_with_a_filename_untouched(self):
+        rom = ROM.objects.create(
+            title="Kept", file=dummy_rom("kept.gba"), uploaded_by=self.user, filename="Kept (U).gba", tags=["x"]
+        )
+
+        self.backfill(django_apps, None)
+
+        rom.refresh_from_db()
+        self.assertEqual((rom.title, rom.filename, rom.tags), ("Kept", "Kept (U).gba", ["x"]))
+
+    def test_backfill_long_title_keeps_the_extension(self):
+        rom = self.legacy_rom("a" * 254, "long.gba")
+
+        self.backfill(django_apps, None)
+
+        rom.refresh_from_db()
+        self.assertEqual(len(rom.filename), 255)
+        self.assertTrue(rom.filename.endswith(".gba"))
+
+    def test_restore_puts_the_filename_back_in_the_title(self):
+        rom = self.legacy_rom("Bomberman 64 (U) [!]", "bomberman.z64")
+        self.backfill(django_apps, None)
+
+        self.restore(django_apps, None)
+
+        rom.refresh_from_db()
+        self.assertEqual(rom.title, "Bomberman 64 (U) [!].z64")
+        self.assertEqual(rom.filename, "")
+        self.assertEqual(rom.tags, [])

@@ -3,7 +3,7 @@ import mimetypes
 import re
 from pathlib import PurePosixPath
 
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.http import FileResponse, Http404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -24,8 +24,12 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def download_filename(rom):
-    """Friendly attachment name: the ROM title plus its extension, not the storage key
+    """Attachment name: the original upload filename (saves, states and playlists on the
+    handheld key off it), else the ROM title plus its extension, not the storage key
     (which may carry a dedup suffix like `zelda_OvlBGqX.nes`)."""
+    original = _CONTROL_CHARS.sub("", rom.filename).replace("/", "_").replace("\\", "_").strip()
+    if original:
+        return original
     title = _CONTROL_CHARS.sub("", rom.title).replace("/", "_").replace("\\", "_").strip()
     if not title:
         return PurePosixPath(rom.file.name).name
@@ -54,7 +58,7 @@ class ROMViewSet(viewsets.ModelViewSet):
         search = self.request.query_params.get("search", "").strip()
         platform = self.request.query_params.get("platform", "").strip()
         if search:
-            queryset = queryset.filter(title__icontains=search)
+            queryset = queryset.filter(Q(title__icontains=search) | Q(filename__icontains=search))
         if platform:
             queryset = queryset.filter(platform=platform)
         return queryset
