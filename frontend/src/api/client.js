@@ -216,6 +216,15 @@ export const api = {
   deletePlaylist(id) {
     return request(`/playlists/${id}/`, { method: "DELETE" });
   },
+  handheldInfo() {
+    return request("/handheld/");
+  },
+  // The app package is for signed-in users only: fetch with the token, then save the blob.
+  async downloadHandheldApp() {
+    const response = await rawRequest("/handheld/download/");
+    const blob = await response.blob();
+    saveBlob(blob, filenameFromDisposition(response.headers.get("Content-Disposition")) || "birdROMs.muxapp");
+  },
   // ROMs are private: fetch through the authenticated endpoint, then save the blob locally.
   async downloadRom(rom) {
     const response = await rawRequest(`/roms/${rom.id}/download/`);
