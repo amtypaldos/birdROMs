@@ -83,6 +83,23 @@ describe("api client", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/api/roms/platforms/");
   });
 
+  it("falls back to the original filename when there is no Content-Disposition", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      blob: () => Promise.resolve(new Blob(["NES"]))
+    }));
+    vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:rom"), revokeObjectURL: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    setToken("abc123");
+
+    await api.downloadRom({ id: 7, title: "Zelda", filename: "Zelda (USA).nes", extension: ".nes" });
+
+    expect(click.mock.contexts[0].download).toBe("Zelda (USA).nes");
+    click.mockRestore();
+  });
+
   it("downloads ROMs through the authenticated endpoint as a blob", async () => {
     const blob = new Blob(["NES"]);
     const fetchMock = vi.fn().mockResolvedValue({

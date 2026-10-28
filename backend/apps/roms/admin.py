@@ -16,9 +16,10 @@ class ROMAdmin(admin.ModelAdmin):
     list_display = ("thumbnail", "title", "platform", "extension", "uploaded_by", "uploaded_at")
     list_display_links = ("thumbnail", "title")
     list_filter = ("platform",)
-    search_fields = ("title",)
+    search_fields = ("title", "filename")
     list_select_related = ("uploaded_by",)
-    readonly_fields = ("thumbnail", "extension", "cover_art_source", "uploaded_at")
+    # Editing filename would silently change download names, and with them the device's save keys.
+    readonly_fields = ("thumbnail", "extension", "filename", "tags", "cover_art_source", "uploaded_at")
     actions = ("rescrape_cover_art",)
 
     @admin.display(description="Cover")

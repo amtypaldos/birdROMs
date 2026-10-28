@@ -1,4 +1,6 @@
 import os
+import re
+from dataclasses import dataclass
 
 
 DISC_IMAGE = "Disc Image"
@@ -70,3 +72,82 @@ def get_extension(filename: str) -> str:
 def classify_platform_from_extension(filename: str) -> str:
     return EXTENSION_TO_PLATFORM.get(get_extension(filename), UNKNOWN_PLATFORM)
 
+
+
+@dataclass(frozen=True)
+class ParsedName:
+    title: str
+    tags: tuple[str, ...]
+
+
+# Region codes are case-sensitive ("U"); region names match case-insensitively.
+REGION_CODES = {
+    "U": "USA", "US": "USA", "E": "Europe", "EU": "Europe", "J": "Japan", "JP": "Japan",
+    "W": "World", "UE": "USA, Europe", "JU": "Japan, USA", "K": "Korea", "G": "Germany",
+    "F": "France", "S": "Spain", "I": "Italy", "A": "Australia", "B": "Brazil", "Br": "Brazil",
+    "Ch": "China", "UK": "UK",
+}  # fmt: skip
+REGION_NAMES = {
+    name.lower(): name
+    for name in (
+        "USA", "Europe", "Japan", "World", "Korea", "Germany", "France", "Spain", "Italy",
+        "Australia", "Brazil", "China", "Asia", "Canada", "Netherlands", "Sweden", "UK",
+    )
+}  # fmt: skip
+GROUP_REPLACEMENTS = {"proto": "Prototype", "unl": "Unlicensed"}
+BRACKET_FLAGS = {"a": "Alternate", "b": "Bad dump", "f": "Fixed", "h": "Hack", "o": "Overdump", "p": "Pirate", "t": "Trained"}
+SCENE_NUMBER_EXTENSIONS = frozenset({".gba", ".nds", ".3ds"})
+
+GROUP_RE = re.compile(r"\(([^()]*)\)|\[([^\[\]]*)\]")
+SCENE_NUMBER_RE = re.compile(r"^\d{4}\s*-\s+")
+LANGUAGE_CODE_RE = re.compile(r"^[A-Z][a-z]$")
+BRACKET_FLAG_RE = re.compile(r"^([abfhopt])(?:$|[0-9A-Z])")
+TRAILING_ARTICLE_RE = re.compile(r"^(.+?), (the|a|an)(?= - |$)", re.IGNORECASE)
+
+
+def _paren_tag(content: str) -> str:
+    tokens = [token.strip() for token in content.split(",")]
+    regions = [REGION_CODES.get(token) or REGION_NAMES.get(token.lower()) for token in tokens]
+    if all(regions):
+        return ", ".join(regions)
+    if len(tokens) >= 2 and all(LANGUAGE_CODE_RE.match(token) for token in tokens):
+        return ", ".join(tokens)
+    content = content.strip()
+    return GROUP_REPLACEMENTS.get(content.lower(), content)
+
+
+def _bracket_tag(content: str) -> str:
+    content = content.strip()
+    if content == "!":
+        return "Verified good dump"
+    if content[:2] in ("T+", "T-"):
+        return "Translation"
+    flag = BRACKET_FLAG_RE.match(content)
+    return BRACKET_FLAGS[flag.group(1)] if flag else content
+
+
+def parse_rom_filename(name: str) -> ParsedName:
+    """Split a ROM file name into a clean display title and region/dump tags."""
+    stem = name
+    first_extension = ""
+    while (extension := get_extension(stem)) in SUPPORTED_EXTENSIONS:
+        first_extension = first_extension or extension
+        stem = stem[: -len(extension)]
+    if " " not in stem:
+        stem = stem.replace("_", " ")
+    if first_extension in SCENE_NUMBER_EXTENSIONS:
+        stem = SCENE_NUMBER_RE.sub("", stem)
+
+    tags: list[str] = []
+    for match in GROUP_RE.finditer(stem):
+        paren, bracket = match.groups()
+        tag = _paren_tag(paren) if paren is not None else _bracket_tag(bracket)
+        if tag and tag not in tags:
+            tags.append(tag)
+
+    title = " ".join(GROUP_RE.sub(" ", stem).split()).strip(" -_")
+    article = TRAILING_ARTICLE_RE.match(title)
+    if article:
+        title = f"{article.group(2)} {article.group(1)}{title[article.end():]}"
+    title = title or stem.strip() or name.strip()
+    return ParsedName(title=title, tags=tuple(tags))

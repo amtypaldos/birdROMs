@@ -155,7 +155,7 @@ export const api = {
     const response = await rawRequest(`/roms/${rom.id}/download/`);
     const blob = await response.blob();
     const filename =
-      filenameFromDisposition(response.headers.get("Content-Disposition")) || `${rom.title}${rom.extension || ""}`;
+      filenameFromDisposition(response.headers.get("Content-Disposition")) || rom.filename || `${rom.title}${rom.extension || ""}`;
     saveBlob(blob, filename);
   }
 };
