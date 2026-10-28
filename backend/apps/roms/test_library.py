@@ -55,6 +55,13 @@ class ParseLibrarySettingsTests(SimpleTestCase):
         self.assertEqual(settings.guard_ratio, 0.5)
         self.assertEqual(settings.guard_min, 10)
 
+    def test_backend_defaults_to_the_storage_backend(self):
+        self.assertEqual(parse_library_settings({"STORAGE_BACKEND": "s3"}).backend, "s3")
+        self.assertEqual(parse_library_settings({"STORAGE_BACKEND": " S3 "}).backend, "s3")
+        self.assertEqual(parse_library_settings({"STORAGE_BACKEND": "filesystem"}).backend, "filesystem")
+        explicit = {"STORAGE_BACKEND": "s3", "LIBRARY_BACKEND": "filesystem"}
+        self.assertEqual(parse_library_settings(explicit).backend, "filesystem")
+
     def test_unknown_backend_raises(self):
         with self.assertRaises(ValueError):
             parse_library_settings({"LIBRARY_BACKEND": "ftp"})
