@@ -102,6 +102,16 @@ class FilesystemLibraryTests(SimpleTestCase):
         self.assertEqual(game.modified.utcoffset(), timedelta(0))
         self.assertIsInstance(game, LibraryEntry)
 
+    def test_entries_report_skipped_subfolders(self):
+        self.touch("ROMS/DC/Sonic/track.bin")
+        self.touch("ROMS/DC/Sonic/more.bin")
+        self.touch("ROMS/DC/Other/a.bin")
+        self.touch("ROMS/DC/Imgs/a.png")
+        self.touch("ROMS/DC/.hidden/a.bin")
+        library = FilesystemLibrary(str(self.root), False)
+        list(library.entries())
+        self.assertEqual(library.subfolders, {"DC": 2})
+
     def test_entries_without_systems_folder(self):
         self.touch("SFC/Game.sfc")
         paths = [e.path for e in FilesystemLibrary(str(self.root), False).entries()]
@@ -198,6 +208,21 @@ class S3LibraryTests(SimpleTestCase):
         self.assertEqual(entries["ROMS/SFC/Game.sfc"].modified, self.when(2))
         self.assertEqual(library.systems_prefix, "ROMS")
         self.assertEqual(storage.objects.prefixes[0], "lib/")
+
+    def test_entries_report_skipped_subfolders(self):
+        storage = FakeStorage(
+            [
+                FakeObject("ROMS/DC/Sonic/track.bin", 1, self.when(1)),
+                FakeObject("ROMS/DC/Sonic/more.bin", 1, self.when(1)),
+                FakeObject("ROMS/DC/Other/a.bin", 1, self.when(1)),
+                FakeObject("ROMS/DC/Imgs/a.png", 1, self.when(1)),
+                FakeObject("ROMS/DC/Imgs/deep/a.png", 1, self.when(1)),
+                FakeObject("ROMS/DC/Game.cue", 1, self.when(1)),
+            ]
+        )
+        library = S3Library(storage, "", False)
+        list(library.entries())
+        self.assertEqual(library.subfolders, {"DC": 2})
 
     def test_empty_prefix_and_root_systems(self):
         storage = FakeStorage([FakeObject("SFC/Game.sfc", 1, self.when(1))])
