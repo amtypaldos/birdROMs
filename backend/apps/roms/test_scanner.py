@@ -394,9 +394,9 @@ class ListingOmits(FilesystemLibrary):
     def entries(self):
         return (entry for entry in super().entries() if entry.path not in self.omit)
 
-    def exists(self, path):
+    def exists_exact(self, path, names):
         self.checked.append(path)
-        return super().exists(path)
+        return super().exists_exact(path, names)
 
 
 class LateUpload(FilesystemLibrary):
@@ -407,6 +407,96 @@ class LateUpload(FilesystemLibrary):
         late = Path(self.root) / "ROMS/SFC/Late.smc"
         late.write_bytes(b"late")
         ROM.objects.create(title="Late", file="ROMS/SFC/Late.smc", source="upload")
+
+
+class CaseInsensitiveLibrary(FilesystemLibrary):
+    """Resolves names in any case, as exFAT, APFS and SMB do, whatever the host filesystem."""
+
+    def __init__(self, root):
+        super().__init__(root, False)
+
+    def _resolve(self, path):
+        current = self.root
+        for part in filter(None, path.split("/")):
+            try:
+                names = os.listdir(current)
+            except OSError:
+                return None
+            match = next((name for name in names if name.lower() == part.lower()), None)
+            if match is None:
+                return None
+            current = os.path.join(current, match)
+        return current
+
+    def exists(self, path):
+        return self._resolve(path) is not None
+
+    def _names(self, folder):
+        resolved = self._resolve(folder)
+        return set(os.listdir(resolved)) if resolved else set()
+
+
+class CaseOnlyRenameTests(ScannerTestCase):
+    def setUp(self):
+        super().setUp()
+        self.library = CaseInsensitiveLibrary(str(self.root))
+
+    def rename(self, old, new):
+        (self.root / old).rename(self.root / new)
+
+    def test_file_renamed_in_case_only(self):
+        self.touch("ROMS/SFC/Game.smc")
+        self.touch("ROMS/SFC/Other.smc")
+        self.scan()
+        old = ROM.objects.get(file="ROMS/SFC/Game.smc")
+        self.rename("ROMS/SFC/Game.smc", "ROMS/SFC/game.smc")
+        result = self.scan()
+        self.assertEqual((result.aborted_reason, result.added, result.missing), ("", 1, 1))
+        old.refresh_from_db()
+        self.assertTrue(old.missing)
+        visible = ROM.objects.filter(missing=False, file__iendswith="/game.smc")
+        self.assertEqual(list(visible.values_list("file", flat=True)), ["ROMS/SFC/game.smc"])
+
+    def test_folder_renamed_in_case_only(self):
+        for name in ("A", "B", "C"):
+            self.touch(f"ROMS/SFC/{name}.smc")
+        self.scan()
+        self.rename("ROMS/SFC", "ROMS/sfc")
+        result = self.scan()
+        self.assertEqual((result.aborted_reason, result.added, result.missing), ("", 3, 3))
+        self.assertEqual(
+            sorted(ROM.objects.filter(missing=False).values_list("file", flat=True)),
+            ["ROMS/sfc/A.smc", "ROMS/sfc/B.smc", "ROMS/sfc/C.smc"],
+        )
+        self.assertEqual(ROM.objects.filter(missing=True, file__startswith="ROMS/SFC/").count(), 3)
+
+    def test_folder_renamed_in_case_only_is_guarded(self):
+        for i in range(60):
+            self.touch(f"ROMS/SFC/g{i:02}.smc")
+        self.scan()
+        self.rename("ROMS/SFC", "ROMS/sfc")
+        result = self.scan()
+        self.assertTrue(result.aborted_reason)
+        self.assertEqual((ROM.objects.count(), ROM.objects.filter(missing=True).count()), (60, 0))
+        result = self.scan(accept_removals=True)
+        self.assertEqual((result.added, result.missing), (60, 60))
+        self.assertEqual(ROM.objects.filter(missing=False, file__startswith="ROMS/sfc/").count(), 60)
+
+    def test_each_folder_is_listed_once_per_scan(self):
+        for name in ("A", "B", "C", "D"):
+            self.touch(f"ROMS/SFC/{name}.smc")
+        self.scan()
+        library = ListingOmits(str(self.root), {f"ROMS/SFC/{name}.smc" for name in "ABC"})
+        with mock.patch.object(ListingOmits, "_names", autospec=True, side_effect=FilesystemLibrary._names) as names:
+            result = scan_library(library, **GUARD)
+        self.assertEqual((result.aborted_reason, result.missing), ("", 0))
+        self.assertEqual(sorted(call.args[1] for call in names.call_args_list), ["", "ROMS", "ROMS/SFC"])
+
+    def test_unchanged_paths_still_present(self):
+        self.touch("ROMS/SFC/Game.smc")
+        self.scan()
+        library = ListingOmits(str(self.root), {"ROMS/SFC/Game.smc"})
+        self.assertEqual(scan_library(library, **GUARD).missing, 0)
 
 
 class VanishedAndUnsortedTests(ScannerTestCase):

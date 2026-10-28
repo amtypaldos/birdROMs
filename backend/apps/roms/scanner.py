@@ -112,8 +112,9 @@ def scan_library(library: Library, *, accept_removals: bool = False, guard_ratio
     """Sync ROM rows with the library listing; a guarded abort or unreachable library changes nothing.
 
     A row is flagged missing only when its path is absent from the whole listing and a re-check
-    confirms the file is gone; rows loaded before listing so an upload landing mid-scan is never
-    flagged, and one that gains a row mid-scan is not created twice.
+    confirms the file is gone in that exact case (a case-only rename is a new game); rows loaded
+    before listing so an upload landing mid-scan is never flagged, and one that gains a row
+    mid-scan is not created twice.
     """
     rows = ROM.objects.order_by().values("id", "file", "size_bytes", "modified_at", "missing", "cover_path")
     existing = {row["file"]: row for row in rows}
@@ -135,11 +136,12 @@ def scan_library(library: Library, *, accept_removals: bool = False, guard_ratio
     if not accept_removals and present and not games:
         return _aborted("The listing has no importable games; the library looks empty.")
     listed = {entry.path for entry in entries}
+    names = {}  # folder -> child names, shared by the re-checks
     try:
         vanished = [
             row["id"]
             for path, row in existing.items()
-            if not row["missing"] and path not in listed and not library.exists(path)
+            if not row["missing"] and path not in listed and not library.exists_exact(path, names)
         ]
     except LibraryUnavailable as exc:
         return _aborted(str(exc))

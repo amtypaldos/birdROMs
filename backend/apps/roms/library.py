@@ -76,6 +76,11 @@ class Library(ABC):
     def exists(self, path: str) -> bool:
         return self.storage.exists(path)
 
+    def exists_exact(self, path: str, names: dict[str, set[str]]) -> bool:
+        """`exists`, with every component of `path` in its exact case; `names` caches folder ->
+        child names across the calls of one scan. This default suits case-sensitive backends."""
+        return self.exists(path)
+
     def modified_time(self, path: str) -> datetime:
         """When `path` last changed (UTC), as a scan sees it; now when the backend can't tell."""
         try:
@@ -169,6 +174,27 @@ class FilesystemLibrary(Library):
     def _dirs(self, path):
         with os.scandir(path) as it:
             return [e for e in it if not _hidden(e.name) and e.is_dir()]
+
+    def exists_exact(self, path, names):
+        """exFAT, APFS and SMB match names in any case, so `exists` can't tell that `SFC/Game.smc`
+        became `sfc/game.smc`: each component must be listed, in that case, in its parent."""
+        folder = ""
+        for part in path.split("/"):
+            if folder not in names:
+                names[folder] = self._names(folder)
+            if part not in names[folder]:
+                return False
+            folder = f"{folder}/{part}" if folder else part
+        return True
+
+    def _names(self, folder):
+        """Every name (hidden ones too) directly in the library-relative `folder`."""
+        try:
+            return set(os.listdir(os.path.join(self.root, folder)))
+        except (FileNotFoundError, NotADirectoryError):
+            return set()
+        except OSError as exc:
+            raise LibraryUnavailable(f"Cannot list {folder} in the library at {self.root}: {exc}") from exc
 
     def _children(self, path):
         try:
