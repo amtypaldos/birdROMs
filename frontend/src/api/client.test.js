@@ -192,6 +192,54 @@ describe("api client", () => {
   });
 });
 
+describe("playlist api", () => {
+  beforeEach(() => {
+    vi.stubGlobal("localStorage", mockLocalStorage());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubFetch(body = {}, status = 200) {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status, json: () => Promise.resolve(body) });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("lists and fetches playlists", async () => {
+    const fetchMock = stubFetch([]);
+    await api.listPlaylists();
+    await api.getPlaylist(4);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/playlists/");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/playlists/4/");
+  });
+
+  it("creates a playlist with a JSON body", async () => {
+    const fetchMock = stubFetch({ id: 1 });
+    await api.createPlaylist({ name: "Road trip", rom_ids: [2, 1] });
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/playlists/");
+    expect(options.method).toBe("POST");
+    expect(options.headers["Content-Type"]).toBe("application/json");
+    expect(JSON.parse(options.body)).toEqual({ name: "Road trip", rom_ids: [2, 1] });
+  });
+
+  it("updates with PATCH and deletes", async () => {
+    const fetchMock = stubFetch({});
+    await api.updatePlaylist(4, { name: "New", rom_ids: [3] });
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/playlists/4/");
+    expect(options.method).toBe("PATCH");
+    expect(JSON.parse(options.body)).toEqual({ name: "New", rom_ids: [3] });
+
+    stubFetch(null, 204);
+    const deleteMock = stubFetch(null, 204);
+    expect(await api.deletePlaylist(4)).toBeNull();
+    expect(deleteMock.mock.calls[0][1].method).toBe("DELETE");
+  });
+});
+
 describe("consumeOidcFragment", () => {
   afterEach(() => {
     window.history.replaceState(null, "", "/");
