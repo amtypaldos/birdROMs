@@ -1,3 +1,4 @@
+import importlib
 from difflib import SequenceMatcher
 from html import escape
 from io import StringIO
@@ -7,6 +8,7 @@ from urllib.parse import quote
 
 import requests
 
+from django.apps import apps as django_apps
 from django.conf import settings
 from django.core.cache import cache
 from django.contrib.auth.models import Group, User
@@ -1879,3 +1881,54 @@ class FilenameAndTagsTests(APITestCase):
         response = self.client.get(self.list_url, {"search": "(U)"})
 
         self.assertEqual(response.data["count"], 1)
+
+
+class BackfillMigrationTests(TestCase):
+    def setUp(self):
+        self.user = make_user("backfiller", "super_admin")
+        migration = importlib.import_module("apps.roms.migrations.0006_backfill_rom_filenames")
+        self.backfill = migration.backfill
+        self.restore = migration.restore
+
+    def legacy_rom(self, title, stored_name):
+        return ROM.objects.create(title=title, file=dummy_rom(stored_name), uploaded_by=self.user, filename="")
+
+    def test_backfill_cleans_title_when_title_already_has_extension(self):
+        rom = self.legacy_rom("6111 - Pokemon Black 2 (US) (frieNDS).nds", "pokemon.nds")
+
+        self.backfill(django_apps, None)
+
+        rom.refresh_from_db()
+        self.assertEqual(rom.filename, "6111 - Pokemon Black 2 (US) (frieNDS).nds")
+        self.assertEqual(rom.title, "Pokemon Black 2")
+        self.assertEqual(rom.tags, ["USA", "frieNDS"])
+
+    def test_backfill_appends_extension_when_title_lacks_it(self):
+        rom = self.legacy_rom("Bomberman 64 (U) [!]", "bomberman.z64")
+
+        self.backfill(django_apps, None)
+
+        rom.refresh_from_db()
+        self.assertEqual(rom.filename, "Bomberman 64 (U) [!].z64")
+        self.assertEqual(rom.title, "Bomberman 64")
+
+    def test_backfill_leaves_rows_with_a_filename_untouched(self):
+        rom = ROM.objects.create(
+            title="Kept", file=dummy_rom("kept.gba"), uploaded_by=self.user, filename="Kept (U).gba", tags=["x"]
+        )
+
+        self.backfill(django_apps, None)
+
+        rom.refresh_from_db()
+        self.assertEqual((rom.title, rom.filename, rom.tags), ("Kept", "Kept (U).gba", ["x"]))
+
+    def test_restore_puts_the_filename_back_in_the_title(self):
+        rom = self.legacy_rom("Bomberman 64 (U) [!]", "bomberman.z64")
+        self.backfill(django_apps, None)
+
+        self.restore(django_apps, None)
+
+        rom.refresh_from_db()
+        self.assertEqual(rom.title, "Bomberman 64 (U) [!].z64")
+        self.assertEqual(rom.filename, "")
+        self.assertEqual(rom.tags, [])
