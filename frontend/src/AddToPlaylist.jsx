@@ -36,6 +36,7 @@ export default function AddToPlaylist({ rom, me }) {
       }
       await api.updatePlaylist(playlist.id, { rom_ids: [...ids, rom.id] });
       setStatus(`Added to ${playlist.name}`);
+      setOpen(false);
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -60,10 +61,10 @@ export default function AddToPlaylist({ rom, me }) {
               {playlist.name}
             </button>
           ))}
-          {status ? <p role="status">{status}</p> : null}
           {error ? <p className="error" role="alert">{error}</p> : null}
         </div>
       ) : null}
+      {status ? <p className="add-status" role="status">{status}</p> : null}
     </div>
   );
 }

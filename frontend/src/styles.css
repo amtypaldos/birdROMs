@@ -864,10 +864,61 @@ select:focus-visible {
   border-bottom: 1px solid var(--color-line);
 }
 
+.picker-row {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
 .picker-row label {
   display: flex;
+  flex: 1 1 auto;
   align-items: center;
   gap: var(--space-2);
+  min-width: 0;
+  cursor: pointer;
+}
+
+/* Checkboxes must not inherit the text-input look (width, height, padding, border). */
+.picker-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 1.1rem;
+  min-height: 0;
+  height: 1.1rem;
+  padding: 0;
+  accent-color: var(--color-cyan);
+}
+
+.picker-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.picker-meta {
+  flex: 0 0 auto;
+  max-width: 40%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.add-status {
+  margin: var(--space-1) 0 0;
+  color: var(--color-lime);
+  font-size: 0.85rem;
+}
+
+/* The current tab must read as current regardless of hover or focus. */
+.view-nav button[aria-current="page"] {
+  background: var(--color-cyan);
+  border-color: var(--color-cyan);
+  color: var(--color-text-on-neon);
+}
+
+.view-nav button:not([aria-current]) {
+  background: transparent;
+  box-shadow: none;
 }
 
 .playlist-roms {

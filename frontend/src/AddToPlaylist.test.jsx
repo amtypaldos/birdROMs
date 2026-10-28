@@ -45,6 +45,7 @@ describe("AddToPlaylist", () => {
 
     await waitFor(() => expect(api.updatePlaylist).toHaveBeenCalledWith(1, { rom_ids: [4, 3, 9] }));
     expect(await screen.findByRole("status")).toHaveTextContent("Added to Mine");
+    expect(screen.queryByRole("button", { name: "Mine" })).not.toBeInTheDocument(); // menu closed
   });
 
   it("does not add a ROM that is already there", async () => {

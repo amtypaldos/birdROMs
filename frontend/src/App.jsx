@@ -543,10 +543,10 @@ function viewFromHash() {
 function ViewNav({ view, onView }) {
   return (
     <nav className="view-nav" aria-label="Sections">
-      <button className={view === "library" ? "primary" : "ghost"} aria-current={view === "library"} onClick={() => onView("library")}>
+      <button className={view === "library" ? "primary" : "ghost"} aria-current={view === "library" ? "page" : undefined} onClick={() => onView("library")}>
         Library
       </button>
-      <button className={view === "playlists" ? "primary" : "ghost"} aria-current={view === "playlists"} onClick={() => onView("playlists")}>
+      <button className={view === "playlists" ? "primary" : "ghost"} aria-current={view === "playlists" ? "page" : undefined} onClick={() => onView("playlists")}>
         Playlists
       </button>
     </nav>
