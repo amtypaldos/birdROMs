@@ -1727,6 +1727,16 @@ class PlaylistTests(APITestCase):
         self.assertEqual([p["name"] for p in response.data], ["Road trip"])
         self.assertEqual(response.data[0]["rom_count"], 2)
 
+    def test_list_includes_owner_username_without_extra_queries(self):
+        playlist = self.make_playlist(self.rom_a)
+        self.make_playlist(self.rom_b)
+        self.client.force_authenticate(self.other)
+
+        with self.assertNumQueries(1):
+            response = self.client.get(self.list_url)
+
+        self.assertEqual(response.data[0]["created_by_username"], playlist.created_by.username)
+
     def test_playlist_list_is_lightweight(self):
         # The list is unpaginated, so it must not carry every ROM of every playlist.
         self.make_playlist(self.rom_a, self.rom_b)
@@ -1735,7 +1745,7 @@ class PlaylistTests(APITestCase):
         response = self.client.get(self.list_url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(set(response.data[0]), {"id", "name", "created_by", "created_at", "rom_count"})
+        self.assertEqual(set(response.data[0]), {"id", "name", "created_by", "created_by_username", "created_at", "rom_count"})
         self.assertEqual(response.data[0]["rom_count"], 2)
         self.assertNotIn("roms", response.data[0])
 
