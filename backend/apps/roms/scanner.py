@@ -2,6 +2,7 @@
 files missing (never delete), restore returning ones. Locking and scan history live in the caller.
 """
 
+import logging
 import posixpath
 from dataclasses import dataclass, field
 
@@ -27,6 +28,7 @@ MULTIFILE_EXTENSIONS = frozenset({".cue", ".gdi", ".m3u", ".ccd", ".mds"})
 MULTIFILE_PART_EXTENSIONS = frozenset({".bin", ".img", ".raw", ".sub"})
 COVER_EXTENSION = ".png"
 BATCH_SIZE = 500
+logger = logging.getLogger(__name__)
 SCAN_LOCK_KEY = 0x62697264524F4D53  # "birdROMS": Postgres advisory lock key, one scan at a time
 
 
@@ -216,5 +218,8 @@ def run_library_scan(*, accept_removals: bool = False, library: Library | None =
 def _enqueue_cover_scrapes(rom_ids):
     from birdroms import tasks  # deferred: tasks imports this module
 
-    for rom_id in ROM.objects.filter(pk__in=rom_ids, cover_path="").values_list("pk", flat=True):
-        tasks.scrape_rom_cover(rom_id)
+    try:
+        for rom_id in ROM.objects.filter(pk__in=rom_ids, cover_path="").values_list("pk", flat=True):
+            tasks.scrape_rom_cover(rom_id)
+    except Exception:
+        logger.exception("Could not queue cover scrapes after a library scan")

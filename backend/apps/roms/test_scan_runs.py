@@ -1,12 +1,16 @@
 import datetime
 import io
+
+import psycopg2
 from unittest import mock
 
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db import connection
 from django.test import SimpleTestCase, override_settings
 
+from apps.roms import scanner
 from apps.roms.models import ROM, LibraryScan
 from apps.roms.scanner import run_library_scan
 from apps.roms.test_scanner import ScannerTestCase
@@ -51,7 +55,7 @@ class RunLibraryScanTests(ScannerTestCase):
         with (
             override_settings(LIBRARY=SMALL_GUARD),
             mock.patch("apps.roms.scanner.scan_library", side_effect=RuntimeError("boom")),
-            mock.patch("apps.roms.scanner._release_scan_lock") as release,
+            mock.patch.object(scanner, "_release_scan_lock", wraps=scanner._release_scan_lock) as release,
         ):
             scan = run_library_scan(library=self.library)
         self.assertEqual(scan.state, "failed")
@@ -71,12 +75,44 @@ class RunLibraryScanTests(ScannerTestCase):
         self.assertEqual(LibraryScan.objects.count(), 0)
         release.assert_not_called()
 
-    def test_real_lock_is_taken_and_released(self):
+    def assert_lock_free_from_another_session(self):
+        db = connection.settings_dict
+        other = psycopg2.connect(
+            dbname=db["NAME"], user=db["USER"], password=db["PASSWORD"], host=db["HOST"], port=db["PORT"] or None
+        )
+        try:
+            with other.cursor() as cursor:
+                cursor.execute("SELECT pg_try_advisory_lock(%s)", [scanner.SCAN_LOCK_KEY])
+                free = cursor.fetchone()[0]
+                cursor.execute("SELECT pg_advisory_unlock(%s)", [scanner.SCAN_LOCK_KEY])
+        finally:
+            other.close()
+        self.assertTrue(free)
+
+    def test_lock_is_released_after_a_scan(self):
         self.touch("ROMS/MD/Sonic.md")
         scan, _ = self.run_scan()
         self.assertEqual(scan.state, "ok")
-        again, _ = self.run_scan()  # would be None if the first call left the lock held
-        self.assertIsNotNone(again)
+        self.assert_lock_free_from_another_session()
+
+    def test_lock_is_released_after_a_failed_scan(self):
+        with (
+            override_settings(LIBRARY=SMALL_GUARD),
+            mock.patch.object(scanner, "scan_library", side_effect=RuntimeError("boom")),
+        ):
+            run_library_scan(library=self.library)
+        self.assert_lock_free_from_another_session()
+
+    def test_enqueue_failure_does_not_fail_the_scan(self):
+        self.touch("ROMS/MD/Sonic.md")
+        with (
+            override_settings(LIBRARY=SMALL_GUARD),
+            mock.patch("birdroms.tasks.scrape_rom_cover", side_effect=RuntimeError("broker down")),
+            self.assertLogs("apps.roms.scanner", "ERROR"),
+        ):
+            scan = run_library_scan(library=self.library)
+        scan.refresh_from_db()
+        self.assertEqual(scan.state, "ok")
 
     def test_enqueues_covers_only_for_added_roms_without_cover_art(self):
         self.touch("ROMS/SFC/With Cover.smc")
