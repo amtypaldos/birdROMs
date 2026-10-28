@@ -49,6 +49,7 @@ from .services import (
     SUPPORTED_PLATFORMS,
     UNKNOWN_PLATFORM,
     classify_platform_from_extension,
+    parse_rom_filename,
 )
 
 
@@ -236,6 +237,54 @@ class NormalizeTitleTests(SimpleTestCase):
         self.assertEqual(normalize_title("Mario & Luigi_ Superstar Saga"), "mario luigi superstar saga")
         # No-Intro files articles at the end: "Legend of Zelda, The".
         self.assertEqual(normalize_title("Legend of Zelda, The (USA)"), "the legend of zelda")
+
+
+    def test_clean_title_matches_tagged_title(self):
+        self.assertEqual(normalize_title("Bomberman 64"), normalize_title("Bomberman 64 (U) [!]"))
+
+
+class ParseRomFilenameTests(SimpleTestCase):
+    CASES = [
+        ("Bomberman 64 (U) [!].z64", "Bomberman 64", ("USA", "Verified good dump")),
+        ("Donkey Kong 64 (U) [!].z64.z64", "Donkey Kong 64", ("USA", "Verified good dump")),
+        ("6111 - Pokemon Black 2 (US) (frieNDS).nds", "Pokemon Black 2", ("USA", "frieNDS")),
+        ("1943 - The Battle of Midway (USA).nes", "1943 - The Battle of Midway", ("USA",)),
+        (
+            "Legend of Zelda, The - The Minish Cap (USA).gba",
+            "The Legend of Zelda - The Minish Cap",
+            ("USA",),
+        ),
+        ("Super_Mario_World.sfc", "Super Mario World", ()),
+        ("Sonic the Hedgehog 2 (World) (Rev A).md", "Sonic the Hedgehog 2", ("World", "Rev A")),
+        ("Pokemon - Emerald Version (USA, Europe).gba", "Pokemon - Emerald Version", ("USA, Europe",)),
+        ("Some Game (Europe) (En,Fr,De) (Beta).gba", "Some Game", ("Europe", "En, Fr, De", "Beta")),
+        ("Hack Game (U) [h1C] [T+Eng1.0].nes", "Hack Game", ("USA", "Hack", "Translation")),
+        ("Proto Thing (Japan) (Proto) (Unl).gb", "Proto Thing", ("Japan", "Prototype", "Unlicensed")),
+        ("Duplicate (USA) (USA).gba", "Duplicate", ("USA",)),
+        ("(Beta).gba", "(Beta)", ("Beta",)),
+        ("Dr. Mario", "Dr. Mario", ()),
+        ("Bomberman 64 (U) [!]", "Bomberman 64", ("USA", "Verified good dump")),
+    ]
+
+    def test_required_cases(self):
+        for name, title, tags in self.CASES:
+            with self.subTest(name=name):
+                parsed = parse_rom_filename(name)
+                self.assertEqual(parsed.title, title)
+                self.assertEqual(parsed.tags, tags)
+
+    def test_trailing_article_variants(self):
+        self.assertEqual(parse_rom_filename("Game, A.nes").title, "A Game")
+        self.assertEqual(parse_rom_filename("Thing, An (USA).nes").title, "An Thing")
+
+    def test_empty_title_falls_back_to_stem_then_name(self):
+        self.assertEqual(parse_rom_filename("  .gba").title, ".gba")
+
+    def test_bracket_flags(self):
+        parsed = parse_rom_filename("X [a] [b1] [f] [o] [p] [t2] [weird].nes")
+        self.assertEqual(
+            parsed.tags, ("Alternate", "Bad dump", "Fixed", "Overdump", "Pirate", "Trained", "weird")
+        )
 
 
 class BestLibretroNameTests(SimpleTestCase):
