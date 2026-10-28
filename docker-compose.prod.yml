@@ -108,10 +108,5 @@ volumes:
   birdroms_pgdata:
   birdroms_media:
   birdroms_library:
-  # To scan a library on a NAS instead, replace `birdroms_library:` above with an NFS volume:
-  # birdroms_library:
-  #   driver: local
-  #   driver_opts:
-  #     type: nfs
-  #     o: addr=192.168.2.2,rw,nfsvers=4
-  #     device: ":/mnt/volume1/retro-games/roms"
+  # To scan a library on a NAS instead, add docker-compose.nfs.yml (see docs/deploying.md):
+  #   docker compose -f docker-compose.prod.yml -f docker-compose.nfs.yml up -d

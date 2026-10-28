@@ -1,5 +1,8 @@
 # Self-hosting birdROMs with Docker
 
+> Deploying with prebuilt images, an NFS or S3 library, behind an existing reverse proxy? See
+> [docs/deploying.md](docs/deploying.md).
+
 Docker is the recommended way to run birdROMs. The production stack in
 [`docker-compose.prod.yml`](docker-compose.prod.yml) runs five containers:
 
