@@ -46,6 +46,21 @@ async function request(path, options = {}) {
   return response.json();
 }
 
+// DRF refusals carry a `{detail}` body; rethrow just that message (other bodies keep their text).
+async function requestWithDetail(path, options) {
+  try {
+    return await request(path, options);
+  } catch (err) {
+    let message = String(err.message || err);
+    try {
+      message = JSON.parse(message).detail || message;
+    } catch {
+      // not a JSON body; keep the raw text
+    }
+    throw err.isNetworkError ? err : new Error(message);
+  }
+}
+
 export function filenameFromDisposition(header) {
   if (!header) return null;
   const encoded = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(header);
@@ -136,7 +151,18 @@ export const api = {
     return request("/roms/platforms/");
   },
   createRom(formData) {
-    return request("/roms/", { method: "POST", body: formData });
+    return requestWithDetail("/roms/", { method: "POST", body: formData });
+  },
+  // Admin-only: library status (incl. the last scan) and on-demand rescans.
+  libraryStatus() {
+    return request("/library/status/");
+  },
+  rescanLibrary({ acceptRemovals = false } = {}) {
+    return requestWithDetail("/library/scan/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accept_removals: acceptRemovals })
+    });
   },
   scrapeCover(romId) {
     return request(`/roms/${romId}/scrape_cover/`, { method: "POST" });

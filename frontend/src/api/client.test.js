@@ -203,6 +203,34 @@ describe("api client", () => {
     await expect(api.approveDevice("ABC123")).rejects.toThrow("This pairing code has expired.");
   });
 
+  it("fetches library status and queues rescans", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({ running: false }) });
+    vi.stubGlobal("fetch", fetchMock);
+    setToken("abc123");
+
+    expect(await api.libraryStatus()).toEqual({ running: false });
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/library/status/");
+
+    await api.rescanLibrary();
+    await api.rescanLibrary({ acceptRemovals: true });
+    const [path, options] = fetchMock.mock.calls[1];
+    expect(path).toBe("/api/library/scan/");
+    expect(options.method).toBe("POST");
+    expect(options.headers["Content-Type"]).toBe("application/json");
+    expect(JSON.parse(options.body)).toEqual({ accept_removals: false });
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({ accept_removals: true });
+  });
+
+  it("surfaces the detail message when a rescan or an upload is refused", async () => {
+    const body = JSON.stringify({ detail: "A library scan is already running." });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 409, text: () => Promise.resolve(body) }));
+    await expect(api.rescanLibrary()).rejects.toThrow("A library scan is already running.");
+
+    const refusal = JSON.stringify({ detail: "This library is read-only." });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 403, text: () => Promise.resolve(refusal) }));
+    await expect(api.createRom(new FormData())).rejects.toThrow("This library is read-only.");
+  });
+
   it("parses Content-Disposition filenames", () => {
     expect(filenameFromDisposition('attachment; filename="Zelda.nes"')).toBe("Zelda.nes");
     expect(filenameFromDisposition("attachment; filename*=UTF-8''Pok%C3%A9mon.gb")).toBe("Pokémon.gb");
