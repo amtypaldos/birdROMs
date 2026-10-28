@@ -11,6 +11,7 @@ vi.mock("./api/client", () => ({
   consumeOidcFragment: vi.fn(() => null),
   api: {
     oidcLoginUrl: "/api/auth/oidc/login/",
+    handheldInfo: vi.fn(() => Promise.resolve({ available: false })),
     authConfig: vi.fn(() => Promise.resolve({ methods: ["local"] })),
     me: vi.fn(() => Promise.resolve({ id: 1, username: "alice", email: "", role: "readonly" })),
     login: vi.fn(),
@@ -761,6 +762,20 @@ describe("App playlists", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Playlists" })).toBeInTheDocument();
+  });
+
+  it("opens the handheld install guide from the nav and from #/handheld", async () => {
+    getToken.mockReturnValue("abc123");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Handheld" }));
+    expect(await screen.findByRole("heading", { name: "Get birdROMs on your handheld" })).toBeInTheDocument();
+    expect(window.location.hash).toBe("#/handheld");
+    cleanup();
+
+    window.history.replaceState(null, "", "/#/handheld");
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Get birdROMs on your handheld" })).toBeInTheDocument();
   });
 
   it("offers Add to playlist on ROM cards", async () => {

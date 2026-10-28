@@ -107,6 +107,9 @@ STATIC_ROOT = Path(os.getenv("STATIC_ROOT", BASE_DIR / "staticfiles"))
 MEDIA_URL = "/media/"
 MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", BASE_DIR / "media"))
 
+# The handheld app package users download (publish with `manage.py publish_handheld`).
+HANDHELD_APP_PATH = Path(os.getenv("HANDHELD_APP_PATH", MEDIA_ROOT / "handheld" / "birdROMs.muxapp"))
+
 # Default file storage for ROMs and cover art; see birdroms/storage.py and .env.example.
 STORAGES = build_storages(os.environ)
 
