@@ -76,10 +76,10 @@ class ROMSerializer(serializers.ModelSerializer):
             path = "/".join(part for part in (library.systems_prefix, folder, filename) if part)
         except LibraryUnavailable:
             raise serializers.ValidationError({"file": [LIBRARY_UNAVAILABLE]})
-        # A row whose file vanished (`missing`) is restored by the upload rather than duplicated.
-        stale = ROM.objects.filter(file=path, missing=True).first()
+        # A row whose file vanished (flagged `missing` or not yet noticed by a scan) is restored by the upload rather than duplicated.
+        stale = ROM.objects.filter(file=path).first()
         try:
-            library.write_new(path, b"".join(upload.chunks()))
+            library.write_new(path, upload)
         except FileExistsError:
             raise serializers.ValidationError({"file": [f"{filename} is already in the library."]})
         except PermissionError:
@@ -98,6 +98,7 @@ class ROMSerializer(serializers.ModelSerializer):
             size_bytes=upload.size,
             modified_at=timezone.now(),
             missing=False,
+            uploaded_at=timezone.now(),
         )
         if stale is not None:
             for field, value in validated_data.items():

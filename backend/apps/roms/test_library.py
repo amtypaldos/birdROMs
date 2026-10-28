@@ -141,6 +141,15 @@ class FilesystemLibraryTests(SimpleTestCase):
         self.assertEqual(list(self.root.iterdir()), [self.root / "lib"])
         self.assertEqual(list((self.root / "lib").iterdir()), [])
 
+    def test_write_new_accepts_uploaded_files_and_bytes(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        library = FilesystemLibrary(str(self.root), False)
+        library.write_new("ROMS/SFC/A.sfc", SimpleUploadedFile("A.sfc", b"streamed"))
+        library.write_new("ROMS/SFC/B.sfc", b"plain")
+        self.assertEqual((self.root / "ROMS/SFC/A.sfc").read_bytes(), b"streamed")
+        self.assertEqual((self.root / "ROMS/SFC/B.sfc").read_bytes(), b"plain")
+
     def test_write_new_with_missing_root_is_unavailable_not_read_only(self):
         library = FilesystemLibrary(str(self.root / "gone"), False)
         with self.assertRaises(LibraryUnavailable):

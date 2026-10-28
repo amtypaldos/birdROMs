@@ -1,5 +1,6 @@
 import importlib
 import shutil
+import tempfile
 from difflib import SequenceMatcher
 from html import escape
 from io import StringIO
@@ -69,10 +70,18 @@ def make_user(username, group_name=None):
     return user
 
 
-def empty_library_root():
+TEST_LIBRARY_PREFIX = "birdroms-test-library-"  # must match birdroms/settings.py
+
+
+def empty_library_root(root=None):
     """Clear the shared temp library and give it a `ROMS` folder: API uploads write real files
-    there and refuse names that are already taken, so tests that upload start from scratch."""
-    root = Path(settings.LIBRARY.root)
+    there and refuse names that are already taken, so tests that upload start from scratch.
+
+    Refuses (loudly) unless the root is the throwaway test library, so a stray run against a
+    real `LIBRARY_ROOT` can never wipe it."""
+    root = Path(root if root is not None else settings.LIBRARY.root).resolve()
+    if not root.name.startswith(TEST_LIBRARY_PREFIX) or not root.is_relative_to(Path(tempfile.gettempdir()).resolve()):
+        raise RuntimeError(f"Refusing to empty {root}: it is not the temporary test library.")
     for child in root.iterdir():
         shutil.rmtree(child) if child.is_dir() else child.unlink()
     (root / "ROMS").mkdir()
