@@ -126,6 +126,15 @@ location / {
 }
 ```
 
+Django builds absolute URLs (OIDC redirects, links baked into downloads) from the `Host` header and
+`X-Forwarded-Proto`, so the proxy **must** forward the public `Host` unchanged (`proxy_set_header
+Host $host`, not the upstream's address) and `X-Forwarded-Proto https`. The bundled `web` nginx
+passes both through. On the Django side that needs the public name in `DJANGO_ALLOWED_HOSTS` and
+`DJANGO_CSRF_TRUSTED_ORIGINS`, and `DJANGO_BEHIND_HTTPS_PROXY=True` (it trusts
+`X-Forwarded-Proto`, so `request.build_absolute_uri("/")` is `https://<host>/`).
+`USE_X_FORWARDED_HOST` is deliberately not used: the real `Host` header already arrives intact.
+A wrong value shows up as `http://` links, a 400 (host not allowed) or CSRF failures.
+
 Do not put browser-only forward-auth (Authelia/Authentik proxy auth, basic auth) in front of
 `/api/`: the handheld client and other API users send `Authorization` headers and cannot answer
 a login redirect. Use birdROMs' own sign-in instead (next section). Gating `/admin/` is fine.
