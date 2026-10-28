@@ -53,6 +53,12 @@ class ROMSerializer(serializers.ModelSerializer):
         read_only_fields = ["uploaded_by", "extension", "filename", "tags", "cover_art_source", *METADATA_FIELDS]
         extra_kwargs = {"title": {"required": False, "allow_blank": True}}
 
+    def validate_title(self, title):
+        # Blank is allowed only on upload (the title is then derived); editing keeps it required.
+        if self.instance is not None and not title.strip():
+            raise serializers.ValidationError("This field may not be blank.")
+        return title
+
     def create(self, validated_data):
         filename = clean_upload_name(validated_data["file"].name)
         parsed = parse_rom_filename(filename)

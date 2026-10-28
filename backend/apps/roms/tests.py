@@ -1805,6 +1805,15 @@ class FilenameAndTagsTests(APITestCase):
         self.assertEqual(rom.filename, self.NAME)
         self.assertEqual(rom.tags, ["USA", "Verified good dump"])
 
+    def test_blank_title_is_rejected_when_editing(self):
+        rom_id = self.upload().data["id"]
+        url = reverse("rom-detail", args=[rom_id])
+
+        response = self.client.patch(url, {"title": ""}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(ROM.objects.get(pk=rom_id).title, "Bomberman 64")
+
     def test_device_listing_includes_filename_and_tags(self):
         self.upload()
 
