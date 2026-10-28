@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { OFFLINE_MESSAGE, isNetworkError } from "./offline";
 import { api, consumeOidcFragment, getToken, setToken } from "./api/client";
 
 function LocalAuthForm({ onAuthed }) {
@@ -421,7 +422,7 @@ function RomCard({ rom, onScrape, onDownload }) {
 
 const SKELETON_CARDS = 8;
 
-function RomList({ romPage, loading, query, platforms, onQuery, onScrape, onDownload }) {
+function RomList({ romPage, loading, offline, query, platforms, onQuery, onScrape, onDownload }) {
   const showSkeleton = loading && romPage.results.length === 0;
   return (
     <section className="library" aria-busy={loading}>
@@ -436,7 +437,7 @@ function RomList({ romPage, loading, query, platforms, onQuery, onScrape, onDown
           ))}
         </ul>
       ) : null}
-      {!loading && romPage.results.length === 0 ? (
+      {!loading && !offline && romPage.results.length === 0 ? (
         <div className="empty-state">
           <p className="empty-title">No ROMs found.</p>
           <p className="muted">Try a different search or platform.</p>
@@ -513,7 +514,7 @@ function ApprovePanel({ code, authed, onDone }) {
 
 const SUPER_ADMIN = "super_admin";
 
-function SessionBar({ me, onRefresh, onLogout }) {
+function SessionBar({ me, offline, onRefresh, onLogout }) {
   return (
     <div className="session">
       {me ? (
@@ -521,7 +522,7 @@ function SessionBar({ me, onRefresh, onLogout }) {
           Signed in as <strong>{me.username}</strong>{" "}
           <span className={`role-badge${me.role === SUPER_ADMIN ? " admin" : ""}`}>{me.role || "no role"}</span>
         </p>
-      ) : (
+      ) : offline ? null : (
         <p className="muted">Loading account…</p>
       )}
       <div className="row">
@@ -551,6 +552,7 @@ export default function App() {
   const [authConfig, setAuthConfig] = useState(null);
   const [me, setMe] = useState(null);
   const [loading, setLoading] = useState(initial.authed);
+  const [offline, setOffline] = useState(false);
 
   // Only the newest request may update the list, so a slow response for an old filter
   // cannot overwrite the results of a newer one.
@@ -563,9 +565,11 @@ export default function App() {
       setRomPage(data);
       setPlatforms(platformList);
       setError("");
+      setOffline(false);
     } catch (err) {
       if (requestId !== latestRequest.current) return;
-      setError(String(err.message || err));
+      if (isNetworkError(err)) setOffline(true);
+      else setError(String(err.message || err));
     } finally {
       if (requestId === latestRequest.current) setLoading(false);
     }
@@ -573,9 +577,19 @@ export default function App() {
 
   useEffect(() => {
     if (authed) {
-      api.me().then(setMe, () => logout());
+      // An unreachable server is not a bad session: stay signed in and let the offline notice show.
+      api.me().then(setMe, (err) => {
+        if (!isNetworkError(err)) logout();
+      });
     }
   }, [authed]);
+
+  useEffect(() => {
+    if (!authed) return undefined;
+    const retry = () => loadRoms();
+    window.addEventListener("online", retry);
+    return () => window.removeEventListener("online", retry);
+  }, [authed, loadRoms]);
 
   useEffect(() => {
     if (authed) loadRoms();
@@ -584,7 +598,10 @@ export default function App() {
 
   useEffect(() => {
     if (!authed && !authConfig) {
-      api.authConfig().then(setAuthConfig, (err) => setError(String(err.message || err)));
+      api.authConfig().then(setAuthConfig, (err) => {
+        if (isNetworkError(err)) setOffline(true);
+        else setError(String(err.message || err));
+      });
     }
   }, [authed, authConfig]);
 
@@ -593,7 +610,8 @@ export default function App() {
       await api.downloadRom(rom);
       setError("");
     } catch (err) {
-      setError(String(err.message || err));
+      if (isNetworkError(err)) setOffline(true);
+      else setError(String(err.message || err));
     }
   }
 
@@ -620,9 +638,10 @@ export default function App() {
         <h1 className="logo">
           bird<span>ROMs</span>
         </h1>
-        {authed ? <SessionBar me={me} onRefresh={loadRoms} onLogout={logout} /> : null}
+        {authed ? <SessionBar me={me} offline={offline} onRefresh={loadRoms} onLogout={logout} /> : null}
       </header>
       <main className={`container${authed && !pairing ? "" : " container-auth"}`}>
+        {offline ? <p className="offline banner" role="status">{OFFLINE_MESSAGE}</p> : null}
         {error ? <p className="error banner" role="alert">{error}</p> : null}
         {pairing ? <ApprovePanel code={pairing.code} authed={authed} onDone={leavePairing} /> : null}
         {!authed ? <AuthPanel config={authConfig} onAuthed={() => setAuthed(true)} /> : null}
@@ -633,6 +652,7 @@ export default function App() {
             <RomList
               romPage={romPage}
               loading={loading}
+              offline={offline}
               query={query}
               platforms={platforms}
               onQuery={setQuery}

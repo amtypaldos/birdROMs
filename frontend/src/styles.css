@@ -326,6 +326,16 @@ select:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.offline.banner {
+  margin: 0 0 var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-amber);
+  border-left-width: 4px;
+  border-radius: var(--radius-md);
+  background: rgb(255 181 71 / 8%);
+  color: var(--color-text);
+}
+
 .loading-text::after {
   content: "_";
   margin-left: 0.15em;
