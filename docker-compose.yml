@@ -46,11 +46,15 @@ services:
       POSTGRES_USER: birdroms
       POSTGRES_PASSWORD: birdroms
       MEDIA_ROOT: /data/media
+      # Existing ROM library, scanned in place (mounted below).
+      LIBRARY_ROOT: /library
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
       - birdroms_dev_media:/data/media
+      # Your ROM library; set LIBRARY_PATH in the shell or a repo-root .env (default ./library).
+      - ${LIBRARY_PATH:-./library}:/library
     depends_on:
       postgres:
         condition: service_healthy
