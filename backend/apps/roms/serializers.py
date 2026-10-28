@@ -134,10 +134,11 @@ class PlaylistListSerializer(serializers.ModelSerializer):
     """
 
     rom_count = serializers.IntegerField(read_only=True)
+    created_by_username = serializers.CharField(source="created_by.username", read_only=True)
 
     class Meta:
         model = Playlist
-        fields = ["id", "name", "created_by", "created_at", "rom_count"]
+        fields = ["id", "name", "created_by", "created_by_username", "created_at", "rom_count"]
         read_only_fields = fields
 
 
