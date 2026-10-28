@@ -528,6 +528,7 @@ def _write_cover_to_library(rom, data: bytes) -> list[str]:
     """
     from .library import get_library
 
+    path = ""
     try:
         if not settings.LIBRARY.write_covers or not rom.file:
             return []
@@ -537,10 +538,12 @@ def _write_cover_to_library(rom, data: bytes) -> list[str]:
         if len(parts) != (3 if prefix else 2) or (prefix and parts[0] != prefix):
             return []
         stem = os.path.splitext(parts[-1])[0]
-        path = "/".join([*parts[:-1], "Imgs", f"{stem}.png"])
-        if not library.exists(path):
+        system_dir = "/".join(parts[:-1])
+        folder, path = library.find_cover(system_dir, stem)
+        if not path:
             if not library.writable:
                 return []
+            path = f"{system_dir}/{folder}/{stem}.png"
             library.write_new(path, _as_png(data))
         rom.cover_path = path
         return ["cover_path"]

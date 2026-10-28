@@ -69,6 +69,25 @@ class Library(ABC):
     def exists(self, path: str) -> bool:
         return self.storage.exists(path)
 
+    @abstractmethod
+    def _children(self, path: str) -> list[tuple[str, bool]]:
+        """`(name, is_dir)` of the visible direct children of the library-relative folder `path`."""
+
+    def find_cover(self, system_dir: str, stem: str) -> tuple[str, str | None]:
+        """`(cover folder name, path of an existing cover or None)` for `stem` in `system_dir`.
+
+        The cover folder keeps whatever case it already has (`imgs`, `IMGS`, ...), `Imgs` when
+        there is none; an existing `<stem>.png` is matched in any case (`Game.PNG`).
+        """
+        folders = sorted(name for name, is_dir in self._children(system_dir) if is_dir and name.lower() == IMGS_FOLDER)
+        if not folders:
+            return "Imgs", None
+        folder = "Imgs" if "Imgs" in folders else folders[0]
+        wanted = f"{stem}.png".lower()
+        names = sorted(name for name, is_dir in self._children(f"{system_dir}/{folder}") if not is_dir)
+        found = next((name for name in names if name.lower() == wanted), None)
+        return folder, f"{system_dir}/{folder}/{found}" if found else None
+
     def _ensure_available(self) -> None:
         """Raise `LibraryUnavailable` when the library can't be reached (checked before writing)."""
 
@@ -124,6 +143,15 @@ class FilesystemLibrary(Library):
     def _dirs(self, path):
         with os.scandir(path) as it:
             return [e for e in it if not _hidden(e.name) and e.is_dir()]
+
+    def _children(self, path):
+        try:
+            with os.scandir(os.path.join(self.root, path)) as it:
+                return [(e.name, e.is_dir()) for e in it if not _hidden(e.name)]
+        except FileNotFoundError:
+            return []
+        except OSError as exc:
+            raise LibraryUnavailable(f"Cannot list {path} in the library at {self.root}: {exc}") from exc
 
     def _files(self, path):
         with os.scandir(path) as it:
@@ -202,6 +230,19 @@ class S3Library(Library):
     @property
     def storage(self) -> Storage:
         return self._storage
+
+    def _children(self, path):
+        base = f"{self._list_prefix}{path}/"
+        try:
+            keys = [obj.key[len(base):] for obj in self._storage.bucket.objects.filter(Prefix=base)]
+        except Exception as exc:  # botocore errors: unreachable, bad credentials, no bucket
+            raise LibraryUnavailable(f"Cannot list the S3 library: {exc}") from exc
+        children = {}
+        for key in keys:
+            name, slash, _rest = key.partition("/")
+            if name and not _hidden(name):
+                children[name] = children.get(name, False) or bool(slash)
+        return list(children.items())
 
     def entries(self) -> Iterator[LibraryEntry]:
         cut = len(self._list_prefix)

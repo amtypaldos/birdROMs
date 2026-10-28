@@ -78,6 +78,14 @@ class FilesystemLibraryTests(SimpleTestCase):
                     (base / folder / "SFC").mkdir()
                 self.assertEqual(FilesystemLibrary(tmp, False).systems_prefix, expected)
 
+    def test_find_cover(self):
+        library = FilesystemLibrary(str(self.root), False)
+        self.assertEqual(library.find_cover("ROMS/SFC", "Game"), ("Imgs", None))
+        self.touch("ROMS/SFC/imgs/Game.PNG")
+        self.touch("ROMS/SFC/imgs/._Other.png")
+        self.assertEqual(library.find_cover("ROMS/SFC", "Game"), ("imgs", "ROMS/SFC/imgs/Game.PNG"))
+        self.assertEqual(library.find_cover("ROMS/SFC", "Other"), ("imgs", None))
+
     def test_entries_lists_files_and_imgs(self):
         rom = self.touch("ROMS/SFC/Game.sfc", b"abcd")
         self.touch("ROMS/SFC/Imgs/Game.png", b"pp")
@@ -236,6 +244,19 @@ class S3LibraryTests(SimpleTestCase):
         self.assertEqual(entries["ROMS/SFC/Game.sfc"].modified, self.when(2))
         self.assertEqual(library.systems_prefix, "ROMS")
         self.assertEqual(storage.objects.prefixes[0], "lib/")
+
+    def test_find_cover(self):
+        storage = FakeStorage(
+            [
+                FakeObject("lib/ROMS/SFC/Game.sfc", 1, self.when(1)),
+                FakeObject("lib/ROMS/SFC/IMGS/Game.PNG", 1, self.when(1)),
+                FakeObject("lib/ROMS/MD/Sonic.md", 1, self.when(1)),
+            ]
+        )
+        library = S3Library(storage, "lib", False)
+        self.assertEqual(library.find_cover("ROMS/SFC", "Game"), ("IMGS", "ROMS/SFC/IMGS/Game.PNG"))
+        self.assertEqual(library.find_cover("ROMS/SFC", "Other"), ("IMGS", None))
+        self.assertEqual(library.find_cover("ROMS/MD", "Sonic"), ("Imgs", None))
 
     def test_entries_report_skipped_subfolders(self):
         storage = FakeStorage(
