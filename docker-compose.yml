@@ -54,6 +54,7 @@ services:
       - ./backend:/app
       - birdroms_dev_media:/data/media
       # Your ROM library; set LIBRARY_PATH in the shell or a repo-root .env (default ./library).
+      # Create the folder beforehand: Docker would otherwise create it root-owned.
       - ${LIBRARY_PATH:-./library}:/library
     depends_on:
       postgres:

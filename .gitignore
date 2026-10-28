@@ -49,3 +49,6 @@ CLEANUP.md
 .idea/
 .vscode/
 .claude/
+
+# Local ROM library mounted by docker-compose.yml (LIBRARY_PATH default)
+/library/
