@@ -209,6 +209,41 @@ describe("App", () => {
     expect(await screen.findByRole("button", { name: "Scrape Cover" })).toBeInTheDocument();
   });
 
+  it("uploads just the file, with no title input", async () => {
+    getToken.mockReturnValue("tok");
+    api.me.mockResolvedValueOnce({ id: 2, username: "root", email: "", role: "super_admin" });
+    api.listRoms.mockResolvedValue(page([]));
+    api.createRom.mockResolvedValue({});
+
+    render(<App />);
+
+    const fileInput = await screen.findByLabelText("ROM file");
+    expect(screen.queryByLabelText("ROM title")).not.toBeInTheDocument();
+    const file = new File(["x"], "Zelda (USA).nes");
+    fireEvent.change(fileInput, { target: { files: [file] } });
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
+
+    await waitFor(() => expect(api.createRom).toHaveBeenCalledTimes(1));
+    const formData = api.createRom.mock.calls[0][0];
+    expect(formData.has("title")).toBe(false);
+    expect(formData.get("file").name).toBe("Zelda (USA).nes");
+  });
+
+  it("shows region and dump tags under the title, and nothing without tags", async () => {
+    const tagged = { id: 1, title: "Zelda", filename: "Zelda (USA) [!].nes", tags: ["USA", "Verified good dump"], platform: "NES", extension: ".nes" };
+    const plain = { id: 2, title: "Metroid", platform: "NES", extension: ".nes" };
+    const empty = { id: 3, title: "Kirby", filename: "Kirby.nes", tags: [], platform: "NES", extension: ".nes" };
+    getToken.mockReturnValueOnce("tok");
+    api.listRoms.mockResolvedValueOnce(page([tagged, plain, empty]));
+
+    const { container } = render(<App />);
+
+    expect(await screen.findByText("USA · Verified good dump")).toHaveClass("rom-tags");
+    expect(container.querySelectorAll(".rom-tags")).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: "Zelda" })).toHaveAttribute("title", "Zelda (USA) [!].nes");
+    expect(screen.getByRole("heading", { name: "Metroid" })).toHaveAttribute("title", "Metroid");
+  });
+
   it("renders no write controls before the user's role is known", async () => {
     getToken.mockReturnValue("tok");
     api.me.mockReturnValueOnce(new Promise(() => {}));
@@ -341,7 +376,9 @@ describe("global drag-and-drop upload", () => {
 
     await waitFor(() => expect(api.createRom).toHaveBeenCalledTimes(3));
     const titles = api.createRom.mock.calls.map(([formData]) => formData.get("title"));
-    expect(titles).toEqual(["a.nes", "b.sfc", "c.gba"]);
+    expect(titles).toEqual([null, null, null]);
+    const names = api.createRom.mock.calls.map(([formData]) => formData.get("file").name);
+    expect(names).toEqual(["a.nes", "b.sfc", "c.gba"]);
     expect(api.createRom.mock.calls[0][0].get("file").name).toBe("a.nes");
     await waitFor(() => expect(screen.getAllByText("Uploaded")).toHaveLength(3));
     expect(screen.queryByText("Drop ROM files to upload")).not.toBeInTheDocument();
