@@ -241,9 +241,14 @@ class PlaylistSerializer(serializers.ModelSerializer):
         return playlist
 
     def _set_items(self, playlist, roms):
+        # Hidden (missing) games stay, after the visible ones, so they reappear if their file returns.
+        hidden = list(
+            playlist.items.filter(rom__missing=True).order_by("order", "id").values_list("rom_id", flat=True)
+        )
         playlist.items.all().delete()
         PlaylistItem.objects.bulk_create(
-            PlaylistItem(playlist=playlist, rom=rom, order=order) for order, rom in enumerate(roms)
+            PlaylistItem(playlist=playlist, rom_id=rom_id, order=order)
+            for order, rom_id in enumerate([rom.pk for rom in roms] + hidden)
         )
         # Drop any prefetched items so the response reflects the new order.
         getattr(playlist, "_prefetched_objects_cache", {}).pop("items", None)
