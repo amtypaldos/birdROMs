@@ -44,6 +44,9 @@ def _in_layout(relative_parts):
 
 class Library(ABC):
     read_only = False
+    # After `entries()` is exhausted: system folder name -> number of non-Imgs subfolders the
+    # listing skipped (games inside subfolders are not imported).
+    subfolders: dict[str, int]
 
     @property
     @abstractmethod
@@ -120,6 +123,7 @@ class FilesystemLibrary(Library):
         systems = self.systems_prefix
         base = os.path.join(self.root, systems) if systems else self.root
         lead = f"{systems}/" if systems else ""
+        self.subfolders = {}
         try:
             system_dirs = self._dirs(base)
             for system in system_dirs:
@@ -132,6 +136,8 @@ class FilesystemLibrary(Library):
                         if e.is_dir():
                             if e.name.lower() == IMGS_FOLDER:
                                 subdirs.append(e)
+                            else:
+                                self.subfolders[system.name] = self.subfolders.get(system.name, 0) + 1
                         elif e.is_file():
                             yield self._entry(e, prefix)
                 for imgs in subdirs:
@@ -186,10 +192,21 @@ class S3Library(Library):
             raise LibraryUnavailable("The S3 library is empty or unreachable.")
         systems = next((n for n in SYSTEMS_FOLDERS if any(e.path.startswith(f"{n}/") for e in found)), "")
         depth = len(systems.split("/")) if systems else 0
+        self.subfolders = {}
+        seen = set()
         for entry in found:
             parts = entry.path.split("/")
             if systems and parts[0] != systems:
                 continue
+            rel = parts[depth:]
+            if (
+                len(rel) >= 3
+                and not any(not part or _hidden(part) for part in rel)
+                and rel[1].lower() != IMGS_FOLDER
+                and (rel[0], rel[1]) not in seen
+            ):
+                seen.add((rel[0], rel[1]))
+                self.subfolders[rel[0]] = self.subfolders.get(rel[0], 0) + 1
             if _in_layout(parts[depth:]):
                 yield entry
 
