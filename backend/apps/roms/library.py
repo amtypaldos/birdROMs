@@ -231,6 +231,12 @@ class S3Library(Library):
     def storage(self) -> Storage:
         return self._storage
 
+    def exists(self, path):
+        try:
+            return self._storage.exists(path)
+        except Exception as exc:  # botocore errors: unreachable, bad credentials, no bucket
+            raise LibraryUnavailable(f"Cannot reach the S3 library: {exc}") from exc
+
     def _children(self, path):
         base = f"{self._list_prefix}{path}/"
         try:

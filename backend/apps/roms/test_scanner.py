@@ -3,6 +3,7 @@ import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 from django.db import connection
 from django.test import TestCase
@@ -373,3 +374,104 @@ class ScanEdgeTests(ScannerTestCase):
         self.touch("ROMS/PORTS/a.sh")
         result = self.scan()
         self.assertEqual(result.aborted_reason, "")
+
+
+class ListingOmits(FilesystemLibrary):
+    """A listing that misses some files which are still on disk (a listing racing a write)."""
+
+    def __init__(self, root, omit):
+        super().__init__(root, False)
+        self.omit = set(omit)
+        self.checked = []
+
+    def entries(self):
+        return (entry for entry in super().entries() if entry.path not in self.omit)
+
+    def exists(self, path):
+        self.checked.append(path)
+        return super().exists(path)
+
+
+class LateUpload(FilesystemLibrary):
+    """Simulates an upload finishing (file, then row) while the listing runs."""
+
+    def entries(self):
+        yield from super().entries()
+        late = Path(self.root) / "ROMS/SFC/Late.smc"
+        late.write_bytes(b"late")
+        ROM.objects.create(title="Late", file="ROMS/SFC/Late.smc", source="upload")
+
+
+class VanishedAndUnsortedTests(ScannerTestCase):
+    def test_unsorted_files_import_with_extension_platform(self):
+        self.touch("ROMS/_UNSORTED/Game.chd")
+        self.touch("ROMS/_UNSORTED/Disc.cue")
+        self.touch("ROMS/_UNSORTED/Bundle.zip")
+        self.touch("ROMS/_UNSORTED/notes.txt")
+        result = self.scan()
+        self.assertEqual(result.unknown_folders, [])
+        self.assertEqual((result.added, result.skipped_other, result.skipped_multifile), (3, 1, 0))
+        self.assertEqual(
+            dict(ROM.objects.values_list("filename", "platform")),
+            {"Game.chd": "Disc Image", "Disc.cue": "Disc Image", "Bundle.zip": "Archive"},
+        )
+        self.assertEqual(self.scan().changed, 0)
+
+    def test_listed_rows_the_scan_does_not_import_are_not_flagged(self):
+        for rel in ("ROMS/PS/Disc.cue", "ROMS/WEIRD/x.smc"):
+            self.touch(rel)
+            ROM.objects.create(title="kept", file=rel, source="upload")
+        self.touch("ROMS/SFC/A.smc")
+        result = self.scan()
+        self.assertEqual(result.missing, 0)
+        self.assertFalse(ROM.objects.filter(missing=True).exists())
+
+    def test_vanished_paths_are_rechecked_and_only_those(self):
+        for name in ("A", "B", "C"):
+            self.touch(f"ROMS/SFC/{name}.smc")
+        self.scan()
+        (self.root / "ROMS/SFC/C.smc").unlink()
+        library = ListingOmits(str(self.root), {"ROMS/SFC/B.smc"})
+        result = scan_library(library, **GUARD)
+        self.assertEqual(sorted(library.checked), ["ROMS/SFC/B.smc", "ROMS/SFC/C.smc"])
+        self.assertEqual(result.missing, 1)
+        self.assertEqual(list(ROM.objects.filter(missing=True).values_list("file", flat=True)), ["ROMS/SFC/C.smc"])
+
+    def test_guard_counts_only_confirmed_vanished_rows(self):
+        for i in range(60):
+            self.touch(f"ROMS/SFC/g{i:02}.smc")
+        self.scan()
+        library = ListingOmits(str(self.root), {f"ROMS/SFC/g{i:02}.smc" for i in range(20)})
+        result = scan_library(library, **GUARD)
+        self.assertEqual((result.aborted_reason, result.missing), ("", 0))
+
+    def test_row_created_while_listing_is_not_flagged(self):
+        self.touch("ROMS/SFC/A.smc")
+        result = scan_library(LateUpload(str(self.root), False), **GUARD)
+        self.assertEqual(result.missing, 0)
+        self.assertFalse(ROM.objects.get(file="ROMS/SFC/Late.smc").missing)
+
+    def test_path_that_gains_a_row_mid_scan_is_not_created_twice(self):
+        from apps.roms import scanner
+
+        self.touch("ROMS/SFC/A.smc")
+        self.touch("ROMS/SFC/B.smc")
+        real = scanner.parse_rom_filename
+
+        def upload_lands(name):
+            if name == "A.smc" and not ROM.objects.filter(file="ROMS/SFC/A.smc").exists():
+                ROM.objects.create(title="Uploaded", file="ROMS/SFC/A.smc", source="upload")
+            return real(name)
+
+        with mock.patch.object(scanner, "parse_rom_filename", side_effect=upload_lands):
+            result = self.scan()
+        self.assertEqual(result.aborted_reason, "")
+        self.assertEqual(result.added, 1)
+        self.assertEqual(result.added_ids, [ROM.objects.get(file="ROMS/SFC/B.smc").pk])
+        self.assertEqual(ROM.objects.get(file="ROMS/SFC/A.smc").title, "Uploaded")
+
+    def test_cover_stem_matches_in_any_case(self):
+        self.touch("ROMS/SFC/Game (USA).sfc")
+        self.touch("ROMS/SFC/imgs/game (usa).PNG")
+        self.scan()
+        self.assertEqual(ROM.objects.get().cover_path, "ROMS/SFC/imgs/game (usa).PNG")
