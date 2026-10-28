@@ -1,4 +1,5 @@
 import os
+import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -7,7 +8,7 @@ from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 
-from apps.roms.library import FilesystemLibrary
+from apps.roms.library import FilesystemLibrary, LibraryEntry, LibraryUnavailable, S3Library
 from apps.roms.models import ROM, Playlist, PlaylistItem
 from apps.roms.scanner import scan_library
 from django.contrib.auth import get_user_model
@@ -249,3 +250,126 @@ class ScanLibraryTests(ScannerTestCase):
             result = self.scan()
         self.assertEqual(result.changed, 1100)
         self.assertLess(len(queries), 15)
+
+
+class BrokenObjects:
+    def filter(self, Prefix):
+        raise RuntimeError("AccessDenied")
+
+
+class BrokenBucketStorage:
+    def __init__(self):
+        self.bucket = self
+        self.objects = BrokenObjects()
+
+
+class FailingMidwayLibrary(FilesystemLibrary):
+    def entries(self):
+        for entry in super().entries():
+            yield entry
+            break
+        raise LibraryUnavailable("share went away")
+
+
+class ScanEdgeTests(ScannerTestCase):
+    def games(self, count, folder="SFC"):
+        for i in range(count):
+            self.touch(f"ROMS/{folder}/g{i:02}.smc")
+
+    def remove(self, count, folder="SFC"):
+        for i in range(count):
+            (self.root / f"ROMS/{folder}/g{i:02}.smc").unlink()
+
+    def test_unreachable_s3_aborts_without_changes(self):
+        ROM.objects.create(title="A", file="ROMS/SFC/A.smc", source="library")
+        result = scan_library(S3Library(BrokenBucketStorage(), "", False), **GUARD)
+        self.assertIn("AccessDenied", result.aborted_reason)
+        self.assertFalse(ROM.objects.get().missing)
+
+    def test_failure_mid_listing_aborts_without_writes(self):
+        self.games(3)
+        self.scan()
+        self.touch("ROMS/SFC/new.smc")
+        (self.root / "ROMS/SFC/g00.smc").unlink()
+        library = FailingMidwayLibrary(str(self.root), False)
+        result = scan_library(library, **GUARD)
+        self.assertTrue(result.aborted_reason)
+        self.assertEqual(ROM.objects.count(), 3)
+        self.assertEqual(ROM.objects.filter(missing=True).count(), 0)
+
+    def test_exactly_at_ratio_does_not_abort(self):
+        self.games(60)
+        self.scan()
+        self.remove(15)
+        result = self.scan()
+        self.assertEqual(result.aborted_reason, "")
+        self.assertEqual(result.missing, 15)
+
+    def test_present_equal_to_min_applies_guard(self):
+        self.games(50)
+        self.scan()
+        self.remove(13)
+        result = self.scan()
+        self.assertTrue(result.aborted_reason)
+        self.assertEqual(ROM.objects.filter(missing=True).count(), 0)
+
+    def test_guard_base_excludes_already_missing_rows(self):
+        self.games(100)
+        self.scan()
+        self.remove(50)
+        self.scan(accept_removals=True)
+        self.assertEqual(ROM.objects.filter(missing=True).count(), 50)
+        # 50 present now: removing 13 is 26% of present (but only 13% of all rows).
+        for i in range(50, 63):
+            (self.root / f"ROMS/SFC/g{i:02}.smc").unlink()
+        result = self.scan()
+        self.assertTrue(result.aborted_reason)
+
+    def test_restored_row_gets_new_size_and_mtime_counted_once(self):
+        path = self.touch("ROMS/SFC/A.smc", b"1", mtime=1_700_000_000)
+        self.touch("ROMS/SFC/B.smc")
+        self.scan()
+        path.unlink()
+        self.assertEqual(self.scan().missing, 1)
+        self.touch("ROMS/SFC/A.smc", b"123456", mtime=1_700_000_500)
+        result = self.scan()
+        self.assertEqual((result.restored, result.changed), (1, 0))
+        rom = ROM.objects.get(file="ROMS/SFC/A.smc")
+        self.assertFalse(rom.missing)
+        self.assertEqual(rom.size_bytes, 6)
+        self.assertEqual(rom.modified_at, datetime.fromtimestamp(1_700_000_500, timezone.utc))
+
+    def test_cover_disappears_is_cleared(self):
+        self.touch("ROMS/SFC/A.smc")
+        cover = self.touch("ROMS/SFC/Imgs/A.png")
+        self.scan()
+        cover.unlink()
+        result = self.scan()
+        self.assertEqual(result.changed, 1)
+        self.assertEqual(ROM.objects.get().cover_path, "")
+
+    def test_listing_without_games_aborts_when_rows_present(self):
+        listings = {
+            "only covers": ["ROMS/SFC/Imgs/A.png"],
+            "only non-game": ["ROMS/PORTS/a.sh"],
+            "only unknown": ["ROMS/WEIRD/x.smc"],
+        }
+        for label, files in listings.items():
+            with self.subTest(label):
+                ROM.objects.all().delete()
+                shutil.rmtree(self.root / "ROMS", ignore_errors=True)
+                self.touch("ROMS/SFC/A.smc")
+                self.scan()
+                (self.root / "ROMS/SFC/A.smc").unlink()
+                for rel in files:
+                    self.touch(rel)
+                result = self.scan()
+                self.assertTrue(result.aborted_reason)
+                self.assertEqual(ROM.objects.filter(missing=True).count(), 0)
+                result = self.scan(accept_removals=True)
+                self.assertEqual(result.missing, 1)
+
+    def test_listing_without_games_and_no_rows_is_fine(self):
+        self.touch("ROMS/PORTS/a.sh")
+        result = self.scan()
+        self.assertEqual(result.aborted_reason, "")

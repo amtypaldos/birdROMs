@@ -166,9 +166,12 @@ class S3Library(Library):
     @property
     def systems_prefix(self) -> str:
         objects = self._storage.bucket.objects
-        for name in SYSTEMS_FOLDERS:
-            if next(iter(objects.filter(Prefix=f"{self._list_prefix}{name}/")), None) is not None:
-                return name
+        try:
+            for name in SYSTEMS_FOLDERS:
+                if next(iter(objects.filter(Prefix=f"{self._list_prefix}{name}/")), None) is not None:
+                    return name
+        except Exception as exc:  # botocore errors: unreachable, bad credentials, no bucket
+            raise LibraryUnavailable(f"Cannot list the S3 library: {exc}") from exc
         return ""
 
     @property
