@@ -94,8 +94,8 @@ def _guard_reason(present, to_flag, guard_ratio, guard_min):
 def scan_library(library: Library, *, accept_removals: bool = False, guard_ratio: float, guard_min: int) -> ScanResult:
     """Sync ROM rows with the library listing; a guarded abort or unreachable library changes nothing."""
     try:
-        depth = 1 if library.systems_prefix else 0
         entries = list(library.entries())
+        depth = 1 if library.systems_prefix else 0
     except LibraryUnavailable as exc:
         return _aborted(str(exc))
     if not entries:
@@ -111,6 +111,8 @@ def scan_library(library: Library, *, accept_removals: bool = False, guard_ratio
     existing = {row["file"]: row for row in rows}
     present = sum(1 for row in existing.values() if not row["missing"])
     vanished = [row["id"] for path, row in existing.items() if path not in games and not row["missing"]]
+    if not accept_removals and present and not games:
+        return _aborted("The listing has no importable games; the library looks empty.")
     if not accept_removals:
         reason = _guard_reason(present, len(vanished), guard_ratio, guard_min)
         if reason:
