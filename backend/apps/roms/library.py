@@ -18,6 +18,8 @@ from django.core.exceptions import SuspiciousFileOperation
 from django.core.files.base import ContentFile, File
 from django.core.files.storage import FileSystemStorage, Storage
 
+from .platform_aliases import platform_for_folder
+
 SYSTEMS_FOLDERS = ("ROMS", "Roms")
 IMGS_FOLDER = "imgs"
 # Upload temp names (`.<name>.<8 hex>.part`) stay under the 255-byte name limit.
@@ -73,6 +75,25 @@ class Library(ABC):
 
     def exists(self, path: str) -> bool:
         return self.storage.exists(path)
+
+    def modified_time(self, path: str) -> datetime:
+        """When `path` last changed (UTC), as a scan sees it; now when the backend can't tell."""
+        try:
+            return self.storage.get_modified_time(path).astimezone(timezone.utc)
+        except Exception:  # an S3 HEAD that failed, a storage without modified times
+            return datetime.now(timezone.utc)
+
+    def system_folder(self, systems: str, muos_folder: str) -> str:
+        """The folder under `systems` for a `muos_folder` upload: that folder when it exists, else
+        an existing folder of the same platform (`snes`, a lower-case `sfc`), else `muos_folder`."""
+        names = sorted(name for name, is_dir in self._children(systems) if is_dir)
+        if muos_folder in names:
+            return muos_folder
+        for name in names:
+            info = platform_for_folder(name)
+            if info is not None and info.muos_folder == muos_folder:
+                return name
+        return muos_folder
 
     @abstractmethod
     def _children(self, path: str) -> list[tuple[str, bool]]:
@@ -260,7 +281,7 @@ class S3Library(Library):
             raise LibraryUnavailable(f"Cannot reach the S3 library: {exc}") from exc
 
     def _children(self, path):
-        base = f"{self._list_prefix}{path}/"
+        base = f"{self._list_prefix}{path}/" if path else self._list_prefix
         try:
             keys = [obj.key[len(base):] for obj in self._storage.bucket.objects.filter(Prefix=base)]
         except Exception as exc:  # botocore errors: unreachable, bad credentials, no bucket

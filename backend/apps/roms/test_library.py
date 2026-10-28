@@ -354,6 +354,16 @@ class S3LibraryTests(SimpleTestCase):
         list(library.entries())
         self.assertEqual(library.subfolders, {"DC": 2})
 
+    def test_system_folder_reuses_an_existing_folder_of_the_platform(self):
+        storage = FakeStorage(
+            [FakeObject("lib/ROMS/snes/Game.sfc", 1, self.when(1)), FakeObject("lib/ROMS/MD/Sonic.md", 1, self.when(1))]
+        )
+        library = S3Library(storage, "lib", False)
+        self.assertEqual(library.system_folder("ROMS", "SFC"), "snes")
+        self.assertEqual(library.system_folder("ROMS", "GBA"), "GBA")
+        root_level = S3Library(FakeStorage([FakeObject("sfc/Game.sfc", 1, self.when(1))]), "", False)
+        self.assertEqual(root_level.system_folder("", "SFC"), "sfc")
+
     def test_empty_prefix_and_root_systems(self):
         storage = FakeStorage([FakeObject("SFC/Game.sfc", 1, self.when(1))])
         library = S3Library(storage, "", False)

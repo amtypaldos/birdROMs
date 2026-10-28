@@ -1,6 +1,7 @@
 import shutil
 import tempfile
-from datetime import timedelta
+from datetime import datetime, timedelta
+from datetime import timezone as dt_timezone
 from pathlib import Path
 from unittest import mock
 
@@ -15,6 +16,7 @@ from rest_framework.test import APITestCase
 
 from apps.roms.library import FilesystemLibrary, LibraryUnavailable
 from apps.roms.models import ROM, LibraryScan, Playlist, PlaylistItem
+from apps.roms.scanner import run_library_scan
 from apps.roms.tests import empty_library_root, make_user
 from birdroms.tasks import roms_missing_cover_art
 
@@ -257,6 +259,83 @@ class LibraryUploadTests(LibraryRootTestCase):
             response = self.upload("Game.smc", platform="SNES")
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["file"][0], "The ROM library is unavailable.")
+
+    def test_upload_reuses_an_existing_folder_of_the_platform(self):
+        (self.root / "ROMS/snes").mkdir()
+        self.assertEqual(self.upload("Game.smc", platform="SNES").status_code, 201)
+        self.assertEqual(ROM.objects.get().file.name, "ROMS/snes/Game.smc")
+        self.assertTrue((self.root / "ROMS/snes/Game.smc").exists())
+
+    def test_upload_reuses_a_lower_case_muos_folder(self):
+        (self.root / "ROMS/sfc").mkdir()
+        self.assertEqual(self.upload("Game.smc", platform="SNES").status_code, 201)
+        self.assertEqual(ROM.objects.get().file.name, "ROMS/sfc/Game.smc")
+
+    def test_upload_prefers_the_muos_folder_over_an_alias(self):
+        (self.root / "ROMS/snes").mkdir()
+        (self.root / "ROMS/SFC").mkdir()
+        self.assertEqual(self.upload("Game.smc", platform="SNES").status_code, 201)
+        self.assertEqual(ROM.objects.get().file.name, "ROMS/SFC/Game.smc")
+
+    def test_upload_records_the_written_files_mtime(self):
+        self.assertEqual(self.upload("Game.smc", platform="SNES").status_code, 201)
+        mtime = (self.root / "ROMS/SFC/Game.smc").stat().st_mtime
+        self.assertEqual(ROM.objects.get().modified_at, datetime.fromtimestamp(mtime, dt_timezone.utc))
+        with mock.patch("birdroms.tasks.scrape_rom_cover"):
+            scan = run_library_scan()
+        self.assertEqual((scan.state, scan.changed, scan.added), ("ok", 0, 0))
+
+    def test_update_refuses_a_new_file(self):
+        self.upload("Game.smc", b"original", platform="SNES")
+        rom = ROM.objects.get()
+        url = reverse("rom-detail", args=[rom.pk])
+        for method in (self.client.patch, self.client.put):
+            with self.subTest(method=method.__name__):
+                response = method(
+                    url,
+                    {"title": "T", "file": SimpleUploadedFile("Other.smc", b"replacement")},
+                    format="multipart",
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.data["file"][0], "A ROM's file can't be replaced; upload it as a new file.")
+        rom.refresh_from_db()
+        self.assertEqual(rom.file.name, "ROMS/SFC/Game.smc")
+        self.assertEqual((self.root / "ROMS/SFC/Game.smc").read_bytes(), b"original")
+        self.assertFalse((self.root / "ROMS/SFC/Other.smc").exists())
+
+    def test_update_without_a_file_still_works(self):
+        self.upload("Game.smc", platform="SNES")
+        rom = ROM.objects.get()
+        response = self.client.patch(reverse("rom-detail", args=[rom.pk]), {"title": "Renamed"}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        rom.refresh_from_db()
+        self.assertEqual(rom.title, "Renamed")
+
+
+class UploadThenScanTests(LibraryRootTestCase):
+    """Uploads must survive the next scan, wherever they landed."""
+
+    def test_uploads_stay_visible_after_a_scan(self):
+        self.client.force_authenticate(self.admin)
+        uploads = {"Game.chd": {}, "Disc.cue": {}, "Bundle.zip": {}, "Game (USA).sfc": {"platform": "SNES"}}
+        with mock.patch("apps.roms.views.scrape_rom_cover"):
+            for name, extra in uploads.items():
+                data = f"bytes of {name}".encode()
+                response = self.client.post(
+                    reverse("rom-list"), {"file": SimpleUploadedFile(name, data), **extra}, format="multipart"
+                )
+                self.assertEqual(response.status_code, 201, response.data)
+        sizes = dict(ROM.objects.values_list("filename", "size_bytes"))
+        with mock.patch("birdroms.tasks.scrape_rom_cover"):
+            scan = run_library_scan()
+        self.assertEqual(scan.state, "ok", scan.message)
+        self.assertEqual((scan.missing, scan.added), (0, 0))
+        self.assertNotIn("_UNSORTED", scan.unknown_folders)
+        self.assertEqual(ROM.objects.filter(missing=False).count(), 4)
+        self.assertEqual(dict(ROM.objects.values_list("filename", "size_bytes")), sizes)
+        self.assertEqual(sizes, {name: len(f"bytes of {name}".encode()) for name in uploads})
+        self.assertEqual(ROM.objects.get(filename="Game (USA).sfc").file.name, "ROMS/SFC/Game (USA).sfc")
+        self.assertEqual(ROM.objects.get(filename="Disc.cue").file.name, "ROMS/_UNSORTED/Disc.cue")
 
 
 class LibraryStatusTests(LibraryRootTestCase):
