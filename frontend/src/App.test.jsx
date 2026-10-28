@@ -629,6 +629,8 @@ describe("approve device page", () => {
 describe("App playlists", () => {
   afterEach(() => {
     window.history.replaceState(null, "", "/");
+    getToken.mockReset();
+    getToken.mockReturnValue(null);
   });
 
   it("switches between Library and Playlists with the nav and the address bar hash", async () => {
@@ -648,8 +650,6 @@ describe("App playlists", () => {
     fireEvent.click(screen.getByRole("button", { name: "Library" }));
     expect(await screen.findByRole("heading", { name: "ROM Library" })).toBeInTheDocument();
     expect(window.location.hash).toBe("");
-    getToken.mockReset();
-    getToken.mockReturnValue(null);
   });
 
   it("opens straight to playlists from #/playlists", async () => {
@@ -658,8 +658,6 @@ describe("App playlists", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Playlists" })).toBeInTheDocument();
-    getToken.mockReset();
-    getToken.mockReturnValue(null);
   });
 
   it("offers Add to playlist on ROM cards", async () => {
@@ -668,8 +666,6 @@ describe("App playlists", () => {
     render(<App />);
 
     expect(await screen.findByRole("button", { name: "Add Zelda to a playlist" })).toBeInTheDocument();
-    getToken.mockReset();
-    getToken.mockReturnValue(null);
   });
 
   it("does not show the nav on the login screen", async () => {

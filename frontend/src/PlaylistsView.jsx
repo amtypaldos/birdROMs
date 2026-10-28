@@ -27,7 +27,8 @@ function plural(count, word) {
 // Playlist ROMs use the compact device shape, so the cover is `cover_url`, fetched with the token.
 function PlaylistCover({ rom }) {
   const [src, setSrc] = useState(null);
-  const hasCover = Boolean(rom.cover_url);
+  // Picked-but-unsaved ROMs have the library shape (`cover_art_url`); saved ones the device shape.
+  const hasCover = Boolean(rom.cover_url || rom.cover_art_url);
 
   useEffect(() => {
     if (!hasCover) return undefined;
@@ -395,7 +396,11 @@ function PlaylistList({ me, onOpen }) {
               <button type="button" className="playlist-item" onClick={() => onOpen(playlist.id)}>
                 <span className="playlist-name">{playlist.name}</span>
                 <span className="muted">{plural(playlist.rom_count, "ROM")}</span>
-                {playlist.created_by === me?.id ? <span className="role-badge admin">Yours</span> : null}
+                {playlist.created_by === me?.id ? (
+                  <span className="role-badge admin">Yours</span>
+                ) : (
+                  <span className="muted">By {playlist.created_by_username || "a friend"}</span>
+                )}
               </button>
             </li>
           ))}
