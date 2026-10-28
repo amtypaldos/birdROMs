@@ -63,6 +63,9 @@ def personalized_package(server_url: str):
         for item in source.infolist():
             if item.filename != SEED_ENTRY:
                 target.writestr(item, source.read(item.filename))
-        target.writestr(SEED_ENTRY, seed)
+        entry = zipfile.ZipInfo(SEED_ENTRY, date_time=datetime.now(dt_timezone.utc).timetuple()[:6])
+        entry.compress_type = zipfile.ZIP_DEFLATED
+        entry.external_attr = 0o100644 << 16  # a regular rw-r--r-- file
+        target.writestr(entry, seed)
     out.seek(0)
     return out
