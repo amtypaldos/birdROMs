@@ -239,7 +239,11 @@ class FilesystemLibrary(Library):
                 raise
             except OSError:  # no hard links here (exFAT, some SMB shares)
                 with open(temp, "rb") as source, open(target, "xb") as handle:
-                    shutil.copyfileobj(source, handle)
+                    try:
+                        shutil.copyfileobj(source, handle)
+                    except BaseException:
+                        os.unlink(target)  # our own partial copy ("x" made it), never a library file
+                        raise
         finally:
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(temp)
