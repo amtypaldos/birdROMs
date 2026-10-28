@@ -89,6 +89,24 @@ class HideMissingTests(LibraryRootTestCase):
         self.assertIn(f"Unknown ROM id(s): {self.gone.pk}.", str(response.data))
 
 
+    def test_replacing_rom_ids_keeps_hidden_items_after_the_visible_ones(self):
+        other = self.library_rom("ROMS/SFC/Other.smc", title="Other")
+        playlist = Playlist.objects.create(name="Mix", created_by=self.admin)
+        for order, rom in enumerate((self.present, self.gone, other)):
+            PlaylistItem.objects.create(playlist=playlist, rom=rom, order=order)
+        self.client.force_authenticate(self.admin)
+        url = reverse("playlist-detail", args=[playlist.pk])
+        response = self.client.patch(url, {"rom_ids": [other.pk, self.present.pk]}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual([r["id"] for r in response.data["roms"]], [other.pk, self.present.pk])
+        self.assertEqual(
+            list(playlist.items.values_list("rom_id", flat=True)), [other.pk, self.present.pk, self.gone.pk]
+        )
+        ROM.objects.filter(pk=self.gone.pk).update(missing=False)  # its file came back
+        detail = self.client.get(url).data
+        self.assertEqual([r["id"] for r in detail["roms"]], [other.pk, self.present.pk, self.gone.pk])
+
+
 class LibraryDownloadAndCoverTests(LibraryRootTestCase):
     def setUp(self):
         super().setUp()
