@@ -8,7 +8,7 @@ from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 
-from apps.roms.library import FilesystemLibrary, LibraryEntry, LibraryUnavailable, S3Library
+from apps.roms.library import FilesystemLibrary, LibraryUnavailable, S3Library
 from apps.roms.models import ROM, Playlist, PlaylistItem
 from apps.roms.scanner import scan_library
 from django.contrib.auth import get_user_model
