@@ -160,8 +160,8 @@ container).
 
 **NFS / a host directory:** in `docker-compose.prod.yml`, replace
 `birdroms_media:/data/media` with a bind mount such as `/mnt/roms:/data/media`. The container
-runs as a non-root `birdroms` user (uid/gid `999`), so that user must be able to write to the
-directory. Run `chown -R 999:999 /mnt/roms`, or set up your NFS export to match.
+runs as a non-root `birdroms` user (uid/gid `568`), so that user must be able to write to the
+directory. Run `chown -R 568:568 /mnt/roms`, or set up your NFS export to match.
 
 **S3-compatible (AWS S3, MinIO, Cloudflare R2, Backblaze B2):** create a private bucket and an
 access key for it, then add to `backend/.env`. MinIO example:
@@ -216,12 +216,13 @@ docker compose -f docker-compose.prod.yml up -d postgres
 docker compose -f docker-compose.prod.yml exec -T postgres \
   sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < birdroms-YYYY-MM-DD.dump
 docker run --rm -v birdroms_birdroms_media:/data -v "$PWD":/backup alpine \
-  sh -c 'tar xzf /backup/birdroms-media-YYYY-MM-DD.tar.gz -C /data && chown -R 999:999 /data'
+  sh -c 'tar xzf /backup/birdroms-media-YYYY-MM-DD.tar.gz -C /data && chown -R 568:568 /data'
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-The backend container runs as the `birdroms` user, uid/gid `999`. That is why the media
-files are given back to `999:999`.
+The backend container runs as the `birdroms` user, uid/gid `568` (TrueNAS's `apps` account;
+change it with `--build-arg APP_UID=... --build-arg APP_GID=...`). That is why the media
+files are given back to `568:568`.
 
 ## 10. Smoke test
 

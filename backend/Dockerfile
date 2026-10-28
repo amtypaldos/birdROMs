@@ -25,7 +25,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH" \
     MEDIA_ROOT=/data/media \
     STATIC_ROOT=/app/staticfiles
-RUN groupadd --system --gid 999 birdroms && useradd --system --uid 999 --gid 999 --home /app birdroms \
+# The app user. 568:568 is TrueNAS's built-in `apps` account, so files on a TrueNAS share are
+# owned the same as other apps' (e.g. Plex). Build with --build-arg APP_UID=... to change it.
+ARG APP_UID=568
+ARG APP_GID=568
+RUN groupadd --system --gid ${APP_GID} birdroms && useradd --system --uid ${APP_UID} --gid ${APP_GID} --home /app birdroms \
     && mkdir -p /data/media /library /app/staticfiles && chown -R birdroms:birdroms /data /library /app
 WORKDIR /app
 COPY --from=deps /opt/venv /opt/venv
