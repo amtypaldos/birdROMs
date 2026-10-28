@@ -24,8 +24,12 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def download_filename(rom):
-    """Friendly attachment name: the ROM title plus its extension, not the storage key
+    """Attachment name: the original upload filename (saves, states and playlists on the
+    handheld key off it), else the ROM title plus its extension, not the storage key
     (which may carry a dedup suffix like `zelda_OvlBGqX.nes`)."""
+    original = _CONTROL_CHARS.sub("", rom.filename).replace("/", "_").replace("\\", "_").strip()
+    if original:
+        return original
     title = _CONTROL_CHARS.sub("", rom.title).replace("/", "_").replace("\\", "_").strip()
     if not title:
         return PurePosixPath(rom.file.name).name
