@@ -27,7 +27,14 @@ library is mounted, then press **Accept removals** on the Library page once (or 
 ## S3 deployments
 
 The library uses the same bucket and `S3_*` settings as file storage, plus `LIBRARY_S3_PREFIX` for
-the folder inside the bucket that holds `ROMS/` (empty means the bucket root).
+the folder inside the bucket that holds `ROMS/`. The library is rooted at that prefix; the default,
+empty, means the bucket root.
+
+With an empty prefix (and no `S3_LOCATION`), the old media folders `roms/` and `covers/` sit inside
+the library. Your old uploads then stay downloadable (they are not hidden), and when your system
+folders sit directly at the bucket root (no `ROMS/` folder) those two folders show up as unknown
+folders in the scan report. For a clean separation, set `LIBRARY_S3_PREFIX` (for example
+`library/`) and keep `ROMS/` under it (`library/ROMS/SFC/...`).
 
 `LIBRARY_BACKEND` now defaults to the value of `STORAGE_BACKEND`, so an install with
 `STORAGE_BACKEND=s3` keeps an S3 library without changes. Set `LIBRARY_BACKEND` explicitly to
