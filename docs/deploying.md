@@ -77,8 +77,9 @@ is wrong; with `access denied`, the server's export list does not include this h
 fixed when the volume is created: to change them run `docker compose down`, then
 `docker volume rm <project>_birdroms_library`, then start again.
 
-**Write access.** The app runs as uid/gid 568 and must be able to create files in the library
-(uploads, covers). Check it before the first start, with the share mounted:
+**Write access.** The app runs as `PUID`:`PGID` (default 568:568, TrueNAS's `apps` account; set
+them in `backend/.env`, or use compose `user:`) and must be able to create files in the library
+(uploads, covers). The entrypoint never changes the library's ownership. Check it before the first start, with the share mounted:
 
 ```bash
 docker run --rm -u 568:568 -v <project>_birdroms_library:/library alpine \
