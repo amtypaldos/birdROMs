@@ -103,7 +103,11 @@ class ROMViewSet(viewsets.ModelViewSet):
         # Always stream through the app so every download is permission-checked and no
         # backend (filesystem or S3) ever hands the client a permanent public URL.
         rom = self.get_object()
-        return FileResponse(rom.file.open("rb"), as_attachment=True, filename=download_filename(rom))
+        try:
+            stream = rom.file.open("rb")
+        except FileNotFoundError:
+            raise Http404("This ROM's file is missing from storage.")
+        return FileResponse(stream, as_attachment=True, filename=download_filename(rom))
 
 
 class PlaylistViewSet(viewsets.ModelViewSet):

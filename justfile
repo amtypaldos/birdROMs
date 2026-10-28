@@ -26,6 +26,14 @@ backend:
 frontend:
     cd frontend && yarn dev
 
+# Like `backend`, but reachable from other devices on the LAN (e.g. the handheld); `ip` is this machine's LAN address.
+backend-lan ip=`ipconfig getifaddr en0`:
+    cd backend && DJANGO_ALLOWED_HOSTS=localhost,{{ip}} uv run python manage.py runserver 0.0.0.0:8000
+
+# Like `frontend`, but reachable from other devices on the LAN. Point the handheld's server_url at http://<lan-ip>:5173.
+frontend-lan:
+    cd frontend && VITE_LAN=1 yarn dev
+
 # Run backend (Django, against local Postgres) and frontend (Vitest) tests.
 test:
     cd backend && uv run python manage.py test
