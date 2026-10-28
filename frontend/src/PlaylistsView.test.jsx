@@ -54,13 +54,15 @@ describe("PlaylistsView list", () => {
   it("lists playlists with counts and marks the ones you own", async () => {
     api.listPlaylists.mockResolvedValue([
       { id: 1, name: "Mine", created_by: 1, rom_count: 3 },
-      { id: 2, name: "Theirs", created_by: 9, rom_count: 1 }
+      { id: 2, name: "Theirs", created_by: 9, created_by_username: "bob", rom_count: 1 }
     ]);
     render(<PlaylistsView me={ME} />);
 
     expect(await screen.findByRole("button", { name: /Mine/ })).toHaveTextContent("3 ROMs");
     expect(screen.getByRole("button", { name: /Theirs/ })).toHaveTextContent("1 ROM");
     expect(screen.getAllByText("Yours")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: /Theirs/ })).toHaveTextContent("By bob");
+    expect(screen.getByRole("button", { name: /Mine/ })).not.toHaveTextContent("By ");
   });
 
   it("creates a playlist and opens it", async () => {
@@ -150,6 +152,19 @@ describe("PlaylistsView detail (owner)", () => {
     expect(rowTitles()).toEqual(["A", "Delta", "Gamma"]);
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(api.updatePlaylist).toHaveBeenCalledWith(5, { name: "Road trip", rom_ids: [1, 8, 7] }));
+  });
+
+  it("shows cover art for ROMs added from the picker (library shape) before saving", async () => {
+    await openDetail(detail([]));
+    api.listRoms.mockResolvedValue(romPage([rom(7, "Gamma", { cover_url: undefined, cover_art_url: "/api/roms/7/cover/" })]));
+
+    fireEvent.click(screen.getByRole("button", { name: "Add ROMs" }));
+    const picker = await screen.findByRole("dialog", { name: "Add ROMs" });
+    fireEvent.click(await within(picker).findByLabelText("Gamma"));
+    fireEvent.click(within(picker).getByRole("button", { name: "Add 1 selected" }));
+
+    expect(await screen.findByRole("img", { name: "Gamma" })).toHaveAttribute("src", "blob:cover");
+    expect(api.coverObjectUrl).toHaveBeenCalledWith({ id: 7 });
   });
 
   it("searches in the picker", async () => {
