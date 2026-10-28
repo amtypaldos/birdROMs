@@ -1024,6 +1024,14 @@ class ROMDownloadTests(APITestCase):
         response = self.client.get(reverse("rom-download", args=[self.rom.pk + 999]))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_missing_stored_file_returns_404_not_500(self):
+        # A row whose file is gone from storage (a lost media dir, a half-restored backup) is a missing
+        # resource, not a server fault; clients such as the handheld rely on a clean 404.
+        self.rom.file.delete(save=False)
+        self.client.force_authenticate(self.admin_user)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
     def test_serializer_exposes_download_endpoint_not_media_url(self):
         self.client.force_authenticate(make_user("reader", "readonly"))
         data = self.client.get(reverse("rom-list")).data["results"][0]
