@@ -220,8 +220,8 @@ docker run --rm -v birdroms_birdroms_media:/data -v "$PWD":/backup alpine \
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-The backend container runs as the `birdroms` user, uid/gid `568` (TrueNAS's `apps` account;
-change it with `--build-arg APP_UID=... --build-arg APP_GID=...`). That is why the media
+The backend container runs as uid/gid `568` (TrueNAS's `apps` account). Change it at runtime
+with `PUID`/`PGID` in `backend/.env` or with compose `user:`. That is why the media
 files are given back to `568:568`.
 
 ## 10. Smoke test

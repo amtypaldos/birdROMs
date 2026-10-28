@@ -21,7 +21,8 @@ in (your public https address, not `localhost`).
    The command checks that the file is a real birdROMs package, then replaces the published one
    atomically. With Docker, copy the file into the container first (for example
    `docker compose cp dist/birdROMs.muxapp backend:/tmp/` and then
-   `docker compose exec backend python manage.py publish_handheld /tmp/birdROMs.muxapp`).
+   `docker compose exec -u "${PUID:-568}:${PGID:-568}" backend python manage.py publish_handheld /tmp/birdROMs.muxapp`;
+   `exec` runs as root unless you pass `-u`, and the file must belong to the app user).
    Adjust the service name to your compose file.
 3. That is all. The page shows the new size and date; friends re-download and reinstall (the
    friend-facing steps are in the handheld repo's `docs/install.md`). Their pairing is kept.
