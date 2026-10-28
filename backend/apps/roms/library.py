@@ -12,7 +12,7 @@ from typing import Iterator
 
 from django.conf import settings
 from django.core.exceptions import SuspiciousFileOperation
-from django.core.files.base import ContentFile
+from django.core.files.base import ContentFile, File
 from django.core.files.storage import FileSystemStorage, Storage
 
 SYSTEMS_FOLDERS = ("ROMS", "Roms")
@@ -72,8 +72,8 @@ class Library(ABC):
     def _ensure_available(self) -> None:
         """Raise `LibraryUnavailable` when the library can't be reached (checked before writing)."""
 
-    def write_new(self, path: str, data: bytes) -> None:
-        """Create `path` with `data`; never overwrites.
+    def write_new(self, path: str, content: bytes | File) -> None:
+        """Create `path` from `content` (bytes or a Django `File`, streamed); never overwrites.
 
         Raises `PermissionError` (read-only), `LibraryUnavailable`, `ValueError` (the path
         escapes the library) or `FileExistsError`.
@@ -88,12 +88,12 @@ class Library(ABC):
         try:
             if self.exists(path):
                 raise FileExistsError(path)
-            self._write(path, data)
+            self._write(path, content if isinstance(content, File) else ContentFile(content))
         except SuspiciousFileOperation as exc:
             raise ValueError(f"Path escapes the library: {path!r}") from exc
 
     @abstractmethod
-    def _write(self, path: str, data: bytes) -> None: ...
+    def _write(self, path: str, content: File) -> None: ...
 
 
 class FilesystemLibrary(Library):
@@ -166,11 +166,12 @@ class FilesystemLibrary(Library):
         except OSError as exc:
             raise LibraryUnavailable(f"Cannot list the library at {self.root}: {exc}") from exc
 
-    def _write(self, path, data):
+    def _write(self, path, content):
         target = self.storage.path(path)
         os.makedirs(os.path.dirname(target), exist_ok=True)
         with open(target, "xb") as handle:  # "x": fail rather than overwrite on a race
-            handle.write(data)
+            for chunk in content.chunks():
+                handle.write(chunk)
 
 
 class S3Library(Library):
@@ -233,8 +234,8 @@ class S3Library(Library):
             if _in_layout(parts[depth:]):
                 yield entry
 
-    def _write(self, path, data):
-        saved = self._storage.save(path, ContentFile(data))
+    def _write(self, path, content):
+        saved = self._storage.save(path, content)
         if saved != path:  # `file_overwrite=False` renames on a race instead of failing
             raise FileExistsError(path)
 

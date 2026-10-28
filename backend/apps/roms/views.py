@@ -103,9 +103,10 @@ class ROMViewSet(viewsets.ModelViewSet):
             try:
                 stream = get_library().storage.open(rom.cover_path, "rb")
             except FileNotFoundError:
-                raise Http404("This ROM's cover is missing from the library.")
-            content_type = mimetypes.guess_type(rom.cover_path)[0] or "application/octet-stream"
-            return FileResponse(stream, content_type=content_type)
+                stream = None  # the library PNG is gone: fall back to the stored scraped cover
+            if stream is not None:
+                content_type = mimetypes.guess_type(rom.cover_path)[0] or "application/octet-stream"
+                return FileResponse(stream, content_type=content_type)
         if not rom.cover_art:
             raise Http404("This ROM has no cover art.")
         content_type = mimetypes.guess_type(rom.cover_art.name)[0] or "application/octet-stream"

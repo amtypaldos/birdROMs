@@ -1,18 +1,21 @@
 import shutil
+import tempfile
 from datetime import timedelta
 from pathlib import Path
 from unittest import mock
 
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import SimpleTestCase
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.roms.library import LibraryUnavailable
+from apps.roms.library import FilesystemLibrary, LibraryUnavailable
 from apps.roms.models import ROM, LibraryScan, Playlist, PlaylistItem
-from apps.roms.tests import make_user
+from apps.roms.tests import empty_library_root, make_user
 from birdroms.tasks import roms_missing_cover_art
 
 PNG = b"\x89PNG\r\n\x1a\nlibrary-cover"
@@ -22,10 +25,8 @@ class LibraryRootTestCase(APITestCase):
     """Starts each test with an empty library (the shared temp root) that has a `ROMS` folder."""
 
     def setUp(self):
+        empty_library_root()
         self.root = Path(settings.LIBRARY.root)
-        for child in self.root.iterdir():
-            shutil.rmtree(child) if child.is_dir() else child.unlink()
-        (self.root / "ROMS").mkdir()
         self.admin = make_user("admin", "super_admin")
         self.reader = make_user("reader", "readonly")
 
@@ -105,6 +106,13 @@ class LibraryDownloadAndCoverTests(LibraryRootTestCase):
         response = self.client.get(reverse("rom-cover", args=[rom.pk]))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "image/png")
+        self.assertEqual(b"".join(response.streaming_content), PNG)
+
+    def test_cover_falls_back_to_stored_art_when_library_png_is_gone(self):
+        rom = self.library_rom(cover_path="ROMS/SFC/Imgs/Gone.png")
+        rom.cover_art.save("stored.png", ContentFile(PNG), save=True)
+        response = self.client.get(reverse("rom-cover", args=[rom.pk]))
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(b"".join(response.streaming_content), PNG)
 
     def test_cover_missing_from_library_is_404(self):
@@ -190,10 +198,43 @@ class LibraryUploadTests(LibraryRootTestCase):
         (self.root / "ROMS/SFC/Game.smc").unlink()
         response = self.upload("Game.smc", b"new", platform="SNES")
         self.assertEqual(response.status_code, 201, response.data)
+        old_uploaded_at = gone.uploaded_at
         gone.refresh_from_db()
         self.assertFalse(gone.missing)
         self.assertEqual(ROM.objects.count(), 1)
         self.assertEqual(response.data["id"], gone.pk)
+        self.assertEqual(gone.source, "upload")
+        self.assertEqual(gone.uploaded_by, self.admin)
+        self.assertEqual(gone.size_bytes, 3)
+        self.assertEqual(gone.title, "Game")
+        self.assertGreater(gone.uploaded_at, old_uploaded_at)
+        self.assertEqual((self.root / "ROMS/SFC/Game.smc").read_bytes(), b"new")
+
+    def test_upload_over_present_row_whose_file_vanished_restores_it(self):
+        stale = self.library_rom("ROMS/SFC/Game.smc")  # missing=False, scan hasn't noticed yet
+        (self.root / "ROMS/SFC/Game.smc").unlink()
+        response = self.upload("Game.smc", b"new", platform="SNES")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(ROM.objects.count(), 1)
+        stale.refresh_from_db()
+        self.assertEqual(stale.source, "upload")
+        self.assertEqual(stale.uploaded_by, self.admin)
+        self.assertEqual((self.root / "ROMS/SFC/Game.smc").read_bytes(), b"new")
+
+    def test_upload_streams_a_file_not_bytes_into_the_library(self):
+        from django.core.files.base import File
+
+        seen = []
+        real = FilesystemLibrary.write_new
+
+        def spy(library, path, content):
+            seen.append(content)
+            return real(library, path, content)
+
+        with mock.patch.object(FilesystemLibrary, "write_new", spy):
+            self.assertEqual(self.upload("Game.smc", b"streamed", platform="SNES").status_code, 201)
+        self.assertIsInstance(seen[0], File)
+        self.assertEqual((self.root / "ROMS/SFC/Game.smc").read_bytes(), b"streamed")
 
     def test_upload_refused_when_read_only(self):
         with self.settings(LIBRARY=settings.LIBRARY.__class__(**{**settings.LIBRARY.__dict__, "read_only": True})):
@@ -289,3 +330,10 @@ class LibraryStatusTests(LibraryRootTestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.data, {"detail": "A library scan is already running."})
         task.assert_not_called()
+
+
+class EmptyLibraryRootGuardTests(SimpleTestCase):
+    def test_refuses_a_non_temp_or_unprefixed_root(self):
+        for root in ("/", str(Path.home()), tempfile.mkdtemp(prefix="not-the-test-library-")):
+            with self.subTest(root=root), self.assertRaises(RuntimeError):
+                empty_library_root(root)
