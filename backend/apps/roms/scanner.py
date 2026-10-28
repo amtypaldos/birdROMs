@@ -14,20 +14,12 @@ from .library import IMGS_FOLDER, Library, LibraryUnavailable, get_library
 from .models import ROM, LibraryScan
 from .platform_aliases import UNSORTED_FOLDER, platform_for_folder, platform_for_game
 from .services import (
-    SUPPORTED_EXTENSIONS,
+    ROM_EXTENSIONS,
     classify_platform_from_extension,
     get_extension,
     parse_rom_filename,
 )
 
-GAME_EXTENSIONS = SUPPORTED_EXTENSIONS | frozenset(
-    {
-        ".zip", ".md", ".nes", ".gb", ".smc", ".gbc", ".sms", ".pce", ".gg", ".rom", ".gba", ".a26",
-        ".mgw", ".ws", ".ngc", ".p8", ".chd", ".sfc", ".wsc", ".min", ".vb", ".pbp", ".nds", ".iso",
-        ".pak", ".z64", ".v64", ".bin", ".cso", ".ngp", ".n64", ".7z", ".32x", ".a52", ".a78", ".lnx",
-        ".fds", ".sgx", ".col", ".adf", ".d64", ".t64", ".prg", ".dsk", ".st", ".msa", ".mx1", ".mx2",
-    }
-)  # fmt: skip
 MULTIFILE_EXTENSIONS = frozenset({".cue", ".gdi", ".m3u", ".ccd", ".mds"})
 # Parts of a multi-file game, when their folder holds a descriptor (.cue, ...).
 MULTIFILE_PART_EXTENSIONS = frozenset({".bin", ".img", ".raw", ".sub"})
@@ -79,7 +71,7 @@ def _classify(entries, depth):
     for folder, items in files.items():
         if folder.lower() == UNSORTED_FOLDER.lower():
             for entry, name in items:
-                if get_extension(name) in GAME_EXTENSIONS:
+                if get_extension(name) in ROM_EXTENSIONS:
                     games[entry.path] = (entry, folder, name, classify_platform_from_extension(name))
                 else:
                     result.skipped_other += 1
@@ -95,7 +87,7 @@ def _classify(entries, depth):
             ext = get_extension(name)
             if ext in MULTIFILE_EXTENSIONS or (multifile and ext in MULTIFILE_PART_EXTENSIONS):
                 result.skipped_multifile += 1
-            elif ext in GAME_EXTENSIONS:
+            elif ext in ROM_EXTENSIONS:
                 games[entry.path] = (entry, folder, name, platform_for_game(folder, name).name)
             else:
                 result.skipped_other += 1

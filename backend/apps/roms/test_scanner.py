@@ -58,6 +58,13 @@ class ScanLibraryTests(ScannerTestCase):
         self.assertFalse(rom.missing)
         self.assertEqual(ROM.objects.get(file="ROMS/MD/Sonic.md").cover_path, "")
 
+    def test_title_drops_an_extension_only_the_scanner_imports(self):
+        self.touch("ROMS/MSX/Stone of Wisdom, The (Japan).rom")
+        self.scan()
+        rom = ROM.objects.get()
+        self.assertEqual((rom.title, rom.tags), ("The Stone of Wisdom", ["Japan"]))
+        self.assertEqual(rom.filename, "Stone of Wisdom, The (Japan).rom")
+
     def test_rescan_unchanged_is_noop(self):
         self.touch("ROMS/SFC/A.smc")
         self.touch("ROMS/SFC/Imgs/A.png")
