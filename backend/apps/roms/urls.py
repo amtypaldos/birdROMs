@@ -1,5 +1,7 @@
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 
+from .library_views import LibraryScanView, LibraryStatusView
 from .views import PlaylistViewSet, ROMViewSet
 
 router = DefaultRouter()
@@ -12,3 +14,9 @@ playlist_router = DefaultRouter()
 playlist_router.register("", PlaylistViewSet, basename="playlist")
 
 playlist_urlpatterns = playlist_router.urls
+
+# Mounted at /api/library/ (see birdroms/urls.py).
+library_urlpatterns = [
+    path("status/", LibraryStatusView.as_view(), name="library-status"),
+    path("scan/", LibraryScanView.as_view(), name="library-scan"),
+]

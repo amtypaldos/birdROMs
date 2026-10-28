@@ -131,6 +131,22 @@ class FilesystemLibraryTests(SimpleTestCase):
             library.write_new("ROMS/SFC/Imgs/A.png", b"other")
         self.assertEqual((self.root / "ROMS/SFC/Imgs/A.png").read_bytes(), b"data")
 
+    def test_write_new_refuses_paths_that_escape_the_root(self):
+        library = FilesystemLibrary(str(self.root / "lib"), False)
+        (self.root / "lib").mkdir()
+        for path in ("../x.sfc", "ROMS/../../x.sfc", "/tmp/birdroms-x.sfc"):
+            with self.subTest(path=path):
+                with self.assertRaises(ValueError):
+                    library.write_new(path, b"x")
+        self.assertEqual(list(self.root.iterdir()), [self.root / "lib"])
+        self.assertEqual(list((self.root / "lib").iterdir()), [])
+
+    def test_write_new_with_missing_root_is_unavailable_not_read_only(self):
+        library = FilesystemLibrary(str(self.root / "gone"), False)
+        with self.assertRaises(LibraryUnavailable):
+            library.write_new("ROMS/SFC/A.sfc", b"x")
+        self.assertFalse((self.root / "gone").exists())
+
     def test_read_only_refuses_writes(self):
         library = FilesystemLibrary(str(self.root), True)
         self.assertFalse(library.writable)
@@ -175,12 +191,15 @@ class FakeStorage:
         self.bucket = self
         self.keys = set(keys)
         self.saved = []
+        self.rename_on_save = False
 
     def exists(self, name):
         return name in self.keys
 
     def save(self, name, content):
         self.saved.append((name, content.read()))
+        if self.rename_on_save:
+            name = f"{name}_x7Gh2"
         self.keys.add(name)
         return name
 
@@ -234,6 +253,20 @@ class S3LibraryTests(SimpleTestCase):
         library = S3Library(FakeStorage([]), "lib", False)
         with self.assertRaises(LibraryUnavailable):
             list(library.entries())
+
+    def test_write_new_raises_when_storage_renamed_on_a_race(self):
+        storage = FakeStorage([])
+        storage.rename_on_save = True
+        library = S3Library(storage, "", False)
+        with self.assertRaises(FileExistsError):
+            library.write_new("ROMS/SFC/A.sfc", b"x")
+
+    def test_write_new_refuses_paths_that_escape_the_prefix(self):
+        storage = FakeStorage([])
+        library = S3Library(storage, "lib", False)
+        with self.assertRaises(ValueError):
+            library.write_new("../x.sfc", b"x")
+        self.assertEqual(storage.saved, [])
 
     def test_write_new_refuses_existing_and_read_only(self):
         storage = FakeStorage([], keys={"ROMS/SFC/Imgs/A.png"})

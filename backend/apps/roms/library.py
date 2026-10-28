@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Iterator
 
 from django.conf import settings
+from django.core.exceptions import SuspiciousFileOperation
 from django.core.files.base import ContentFile
 from django.core.files.storage import FileSystemStorage, Storage
 
@@ -68,13 +69,28 @@ class Library(ABC):
     def exists(self, path: str) -> bool:
         return self.storage.exists(path)
 
+    def _ensure_available(self) -> None:
+        """Raise `LibraryUnavailable` when the library can't be reached (checked before writing)."""
+
     def write_new(self, path: str, data: bytes) -> None:
-        """Create `path` with `data`; never overwrites."""
+        """Create `path` with `data`; never overwrites.
+
+        Raises `PermissionError` (read-only), `LibraryUnavailable`, `ValueError` (the path
+        escapes the library) or `FileExistsError`.
+        """
+        if self.read_only:
+            raise PermissionError("The library is read-only.")
+        self._ensure_available()
         if not self.writable:
             raise PermissionError("The library is read-only.")
-        if self.exists(path):
-            raise FileExistsError(path)
-        self._write(path, data)
+        if path.startswith("/") or ".." in path.replace("\\", "/").split("/"):
+            raise ValueError(f"Path escapes the library: {path!r}")
+        try:
+            if self.exists(path):
+                raise FileExistsError(path)
+            self._write(path, data)
+        except SuspiciousFileOperation as exc:
+            raise ValueError(f"Path escapes the library: {path!r}") from exc
 
     @abstractmethod
     def _write(self, path: str, data: bytes) -> None: ...
@@ -96,6 +112,10 @@ class FilesystemLibrary(Library):
     @property
     def writable(self) -> bool:
         return not self.read_only and os.access(self.root, os.W_OK)
+
+    def _ensure_available(self):
+        if not os.path.isdir(self.root):
+            raise LibraryUnavailable(f"The library folder {self.root} does not exist.")
 
     @property
     def storage(self) -> Storage:
@@ -214,7 +234,9 @@ class S3Library(Library):
                 yield entry
 
     def _write(self, path, data):
-        self._storage.save(path, ContentFile(data))
+        saved = self._storage.save(path, ContentFile(data))
+        if saved != path:  # `file_overwrite=False` renames on a race instead of failing
+            raise FileExistsError(path)
 
 
 def get_library() -> Library:
