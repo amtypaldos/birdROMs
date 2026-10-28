@@ -1,7 +1,8 @@
 """Env-driven settings for the in-place ROM library (a folder or an S3 bucket/prefix).
 
-`LIBRARY_BACKEND=filesystem` (default) reads `LIBRARY_ROOT`; `s3` reuses the `S3_*` storage
-settings with an optional `LIBRARY_S3_PREFIX`. See apps/roms/library.py.
+`LIBRARY_BACKEND=filesystem` reads `LIBRARY_ROOT`; `s3` reuses the `S3_*` storage settings with
+an optional `LIBRARY_S3_PREFIX`. Unset, it follows `STORAGE_BACKEND` (an S3 install keeps an S3
+library), else filesystem. See apps/roms/library.py.
 """
 
 from dataclasses import dataclass
@@ -25,7 +26,7 @@ class LibrarySettings:
 
 def parse_library_settings(env) -> LibrarySettings:
     """Build `LibrarySettings` from `LIBRARY_*` env vars; unknown backends raise `ValueError`."""
-    backend = (env.get("LIBRARY_BACKEND") or "filesystem").strip().lower()
+    backend = (env.get("LIBRARY_BACKEND") or env.get("STORAGE_BACKEND") or "filesystem").strip().lower()
     if backend not in LIBRARY_BACKENDS:
         raise ValueError(
             f"Unknown LIBRARY_BACKEND {backend!r}; expected one of: {', '.join(LIBRARY_BACKENDS)}"
