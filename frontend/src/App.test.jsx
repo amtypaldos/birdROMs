@@ -65,6 +65,18 @@ describe("App", () => {
     expect(screen.queryByText(/You're offline/)).not.toBeInTheDocument();
   });
 
+  it("shows no empty state or account-loading label while offline", async () => {
+    getToken.mockReturnValue("abc123");
+    api.me.mockRejectedValueOnce(offlineError());
+    api.listRoms.mockRejectedValueOnce(offlineError());
+
+    render(<App />);
+
+    expect(await screen.findByText(/You're offline/)).toBeInTheDocument();
+    expect(screen.queryByText("No ROMs found.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading account…")).not.toBeInTheDocument();
+  });
+
   it("clears the offline notice and reloads when the connection comes back", async () => {
     getToken.mockReturnValue("abc123");
     api.listRoms.mockRejectedValueOnce(offlineError());
