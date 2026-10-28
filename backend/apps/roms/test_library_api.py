@@ -272,6 +272,27 @@ class LibraryUploadTests(LibraryRootTestCase):
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(sorted(p.name for p in (self.root / "ROMS/SFC").iterdir()), [name])
 
+    def test_upload_adopts_the_row_a_scan_created_for_its_file(self):
+        real = FilesystemLibrary.write_new
+
+        def scan_lands(library, path, content):
+            real(library, path, content)
+            ROM.objects.create(
+                title="Game", file=path, filename="Game (USA).smc", source="library", size_bytes=1,
+                cover_path="ROMS/SFC/Imgs/Game (USA).png",
+            )  # fmt: skip
+
+        with mock.patch.object(FilesystemLibrary, "write_new", scan_lands):
+            response = self.upload("Game (USA).smc", b"uploaded", platform="SNES", title="My Game")
+        self.assertEqual(response.status_code, 201, response.data)
+        rom = ROM.objects.get()
+        self.assertEqual(response.data["id"], rom.pk)
+        self.assertEqual((rom.source, rom.uploaded_by, rom.size_bytes), ("upload", self.admin, 8))
+        self.assertEqual((rom.title, rom.tags, rom.filename), ("My Game", ["USA"], "Game (USA).smc"))
+        mtime = (self.root / "ROMS/SFC/Game (USA).smc").stat().st_mtime
+        self.assertEqual(rom.modified_at, datetime.fromtimestamp(mtime, dt_timezone.utc))
+        self.assertEqual(rom.cover_path, "ROMS/SFC/Imgs/Game (USA).png")
+
     def test_upload_refused_when_read_only(self):
         with self.settings(LIBRARY=settings.LIBRARY.__class__(**{**settings.LIBRARY.__dict__, "read_only": True})):
             response = self.upload("Game.smc", platform="SNES")

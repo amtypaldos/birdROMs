@@ -2,7 +2,7 @@ import os
 import re
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.template.defaultfilters import filesizeformat
 from django.urls import reverse
@@ -103,12 +103,19 @@ class ROMSerializer(serializers.ModelSerializer):
             missing=False,
             uploaded_at=timezone.now(),
         )
-        if stale is not None:
-            for field, value in validated_data.items():
-                setattr(stale, field, value)
-            stale.save()
-            return stale
-        return super().create(validated_data)
+        if stale is None:
+            try:
+                with transaction.atomic():
+                    return super().create(validated_data)
+            except IntegrityError:
+                # A scan imported the just-published file first: its row becomes the upload's.
+                stale = ROM.objects.filter(file=path).first()
+                if stale is None:
+                    raise
+        for field, value in validated_data.items():
+            setattr(stale, field, value)
+        stale.save()
+        return stale
 
     def validate_file(self, file):
         # A stored file is never replaced (library files are only ever created, see `create`).
