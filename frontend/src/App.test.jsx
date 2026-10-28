@@ -27,6 +27,7 @@ vi.mock("./api/client", () => ({
 }));
 
 import App, { COVER_POLL_INTERVAL_MS, COVER_POLL_MAX_ATTEMPTS, platformFamily } from "./App";
+import { offlineError } from "./offline";
 import { api, consumeOidcFragment, getToken, setToken } from "./api/client";
 
 describe("App", () => {
@@ -39,6 +40,56 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "Login" })).toBeInTheDocument();
     expect(screen.queryByText("ROM Library")).not.toBeInTheDocument();
     expect(api.listRoms).not.toHaveBeenCalled();
+  });
+
+  it("shows an offline notice, and stays signed in, when the API cannot be reached", async () => {
+    getToken.mockReturnValue("abc123");
+    api.me.mockRejectedValueOnce(offlineError());
+    api.listRoms.mockRejectedValueOnce(offlineError());
+
+    render(<App />);
+
+    expect(await screen.findByText(/You're offline/)).toBeInTheDocument();
+    expect(setToken).not.toHaveBeenCalledWith(null);
+    expect(screen.queryByRole("heading", { name: "Login" })).not.toBeInTheDocument();
+  });
+
+  it("logs out when the sign-in check is rejected with an HTTP error (401)", async () => {
+    getToken.mockReturnValue("stale");
+    api.me.mockRejectedValueOnce(new Error('{"detail":"Invalid token."}'));
+
+    render(<App />);
+
+    await waitFor(() => expect(setToken).toHaveBeenCalledWith(null));
+    expect(await screen.findByRole("heading", { name: "Login" })).toBeInTheDocument();
+    expect(screen.queryByText(/You're offline/)).not.toBeInTheDocument();
+  });
+
+  it("shows no empty state or account-loading label while offline", async () => {
+    getToken.mockReturnValue("abc123");
+    api.me.mockRejectedValueOnce(offlineError());
+    api.listRoms.mockRejectedValueOnce(offlineError());
+
+    render(<App />);
+
+    expect(await screen.findByText(/You're offline/)).toBeInTheDocument();
+    expect(screen.queryByText("No ROMs found.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading account…")).not.toBeInTheDocument();
+  });
+
+  it("clears the offline notice and reloads when the connection comes back", async () => {
+    getToken.mockReturnValue("abc123");
+    api.listRoms.mockRejectedValueOnce(offlineError());
+
+    render(<App />);
+    expect(await screen.findByText(/You're offline/)).toBeInTheDocument();
+
+    act(() => {
+      window.dispatchEvent(new Event("online"));
+    });
+
+    await waitFor(() => expect(screen.queryByText(/You're offline/)).not.toBeInTheDocument());
+    expect(api.listRoms).toHaveBeenCalledTimes(2);
   });
 
   it("downloads through the authenticated API instead of linking to media", async () => {
