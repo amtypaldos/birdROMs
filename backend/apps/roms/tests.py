@@ -9,6 +9,7 @@ from urllib.parse import quote
 import requests
 
 from django.apps import apps as django_apps
+from django.contrib import admin
 from django.conf import settings
 from django.core.cache import cache
 from django.contrib.auth.models import Group, User
@@ -45,6 +46,8 @@ from .cover_art import (
     parse_screenscraper_metadata,
     scrape_rom,
 )
+from .admin import ROMAdmin
+from .cover_art import _title_candidates, _without_dedup_suffix
 from .models import ROM, Playlist, PlaylistItem
 from .services import (
     EXTENSION_TO_PLATFORM,
@@ -797,7 +800,17 @@ class ScrapeRomFilenameTests(APITestCase):
 
     def test_falls_back_to_storage_name_when_blank(self):
         rom = self.make_rom()
-        self.assertEqual(self.scraped_filename(rom), rom.file.name)
+        self.assertEqual(self.scraped_filename(rom), _without_dedup_suffix(rom.file.name))
+
+    def test_original_filename_keeps_a_seven_char_tail(self):
+        rom = self.make_rom(filename="Pokemon_Emerald.gba")
+        filename = self.scraped_filename(rom)
+        self.assertIn("Pokemon_Emerald", _title_candidates(rom.title, filename))
+
+    def test_storage_name_loses_its_dedup_suffix(self):
+        rom = self.make_rom()
+        rom.file.name = "roms/zelda_OvlBGqX.gba"
+        self.assertEqual(self.scraped_filename(rom), "roms/zelda.gba")
 
 
 class ScrapeCoverTaskTests(APITestCase):
@@ -1390,6 +1403,13 @@ class DeviceListingTests(APITestCase):
 class ROMAdminTests(TestCase):
     changelist_url = "/admin/roms/rom/"
 
+    def test_filename_and_tags_are_read_only_and_filename_searchable(self):
+        model_admin = ROMAdmin(ROM, admin.site)
+        readonly = model_admin.get_readonly_fields(None)
+        self.assertIn("filename", readonly)
+        self.assertIn("tags", readonly)
+        self.assertIn("filename", model_admin.search_fields)
+
     def setUp(self):
         self.superuser = User.objects.create_superuser("root", "root@example.com", "test-pass-123")
         self.client.force_login(self.superuser)
@@ -1921,6 +1941,15 @@ class BackfillMigrationTests(TestCase):
 
         rom.refresh_from_db()
         self.assertEqual((rom.title, rom.filename, rom.tags), ("Kept", "Kept (U).gba", ["x"]))
+
+    def test_backfill_long_title_keeps_the_extension(self):
+        rom = self.legacy_rom("a" * 254, "long.gba")
+
+        self.backfill(django_apps, None)
+
+        rom.refresh_from_db()
+        self.assertEqual(len(rom.filename), 255)
+        self.assertTrue(rom.filename.endswith(".gba"))
 
     def test_restore_puts_the_filename_back_in_the_title(self):
         rom = self.legacy_rom("Bomberman 64 (U) [!]", "bomberman.z64")

@@ -1,3 +1,5 @@
+import os
+
 from django.db import migrations
 
 from apps.roms.services import parse_rom_filename
@@ -10,7 +12,10 @@ def backfill(apps, schema_editor):
             filename = rom.title
         else:
             filename = rom.title + rom.extension
-        filename = filename[:255]
+        if len(filename) > 255:
+            # Cut the part before the extension so the extension survives.
+            stem, extension = os.path.splitext(filename)
+            filename = stem[: 255 - len(extension)] + extension
         parsed = parse_rom_filename(filename)
         rom.filename = filename
         rom.title = parsed.title[:255]
@@ -19,6 +24,7 @@ def backfill(apps, schema_editor):
 
 
 def restore(apps, schema_editor):
+    # Lossy: a title edited after the upgrade is overwritten by the filename.
     ROM = apps.get_model("roms", "ROM")
     for rom in ROM.objects.exclude(filename=""):
         rom.title = rom.filename[:255]
