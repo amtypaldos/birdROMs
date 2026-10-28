@@ -3,7 +3,8 @@
 The owner publishes a build with `manage.py publish_handheld <file>`; it lands at
 `settings.HANDHELD_APP_PATH` (default `MEDIA_ROOT/handheld/birdROMs.muxapp`)."""
 
-import hashlib
+import json
+import tempfile
 import zipfile
 from datetime import datetime
 from datetime import timezone as dt_timezone
@@ -38,15 +39,30 @@ def handheld_info():
     path = handheld_path()
     if not path.is_file():
         return None
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
     stat = path.stat()
     return {
         "available": True,
         "filename": path.name,
         "size": stat.st_size,
-        "sha256": digest.hexdigest(),
         "published_at": datetime.fromtimestamp(stat.st_mtime, tz=dt_timezone.utc).isoformat(),
     }
+
+
+SEED_ENTRY = "birdROMs/server.json"
+
+
+def personalized_package(server_url: str):
+    """The published package plus a `server.json` naming this server, as a readable temp file.
+
+    The device has no keyboard, so it learns which server to pair with from this file. It is a
+    separate file from the device's `config.json` (which holds the pairing token) so installing
+    an update never wipes the pairing."""
+    seed = json.dumps({"server_url": server_url.rstrip("/")}) + "\n"
+    out = tempfile.SpooledTemporaryFile(max_size=16 * 1024 * 1024)
+    with zipfile.ZipFile(handheld_path()) as source, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            if item.filename != SEED_ENTRY:
+                target.writestr(item, source.read(item.filename))
+        target.writestr(SEED_ENTRY, seed)
+    out.seek(0)
+    return out

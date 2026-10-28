@@ -1,11 +1,13 @@
-"""Handheld app info + download for signed-in users (any role, including device tokens)."""
+"""Handheld app info + download for signed-in users (any role, including device tokens).
+
+The download is the published package with this server's address added, so the app knows where to pair."""
 
 from django.http import FileResponse
 from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .handheld import handheld_info, handheld_path
+from .handheld import handheld_info, handheld_path, personalized_package
 
 
 class HandheldInfoView(APIView):
@@ -18,4 +20,4 @@ class HandheldDownloadView(APIView):
         path = handheld_path()
         if not path.is_file():
             raise NotFound("The handheld app has not been published yet.")
-        return FileResponse(path.open("rb"), as_attachment=True, filename=path.name)
+        return FileResponse(personalized_package(request.build_absolute_uri("/")), as_attachment=True, filename=path.name)

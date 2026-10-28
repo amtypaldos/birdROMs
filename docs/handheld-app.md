@@ -4,6 +4,11 @@ Signed-in users get a **Handheld** page (`#/handheld`) with install steps and a 
 muOS app (`birdROMs.muxapp`). The server just stores one file and serves it to signed-in users
 (`GET /api/handheld/` for details, `GET /api/handheld/download/` for the file).
 
+The download is personalised: the server adds a small `server.json` (its own address, taken from the
+request, so it honours your proxy settings) to the package. The handheld has no keyboard, so that is how
+the app learns which server to pair with. Make sure friends open the site at the address you want baked
+in (your public https address, not `localhost`).
+
 ## Publish a new version
 
 1. Build the package in the handheld repo: `just package` (writes `dist/birdROMs.muxapp`).

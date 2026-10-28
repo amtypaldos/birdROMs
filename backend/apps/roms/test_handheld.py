@@ -1,4 +1,5 @@
 import io
+import json
 import shutil
 import tempfile
 import zipfile
@@ -10,7 +11,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.roms.handheld import InvalidMuxapp, handheld_info, validate_muxapp
+from apps.roms.handheld import InvalidMuxapp, handheld_info, personalized_package, validate_muxapp
 from apps.roms.tests import make_user
 
 
@@ -77,7 +78,7 @@ class HandheldInfoApiTests(TempHandheldCase, APITestCase):
         self.assertTrue(data["available"])
         self.assertEqual(data["filename"], "birdROMs.muxapp")
         self.assertEqual(data["size"], self.target.stat().st_size)
-        self.assertEqual(len(data["sha256"]), 64)
+        self.assertNotIn("sha256", data)
         self.assertIn("published_at", data)
         self.assertNotIn(str(self.tmp), str(data))
 
@@ -88,7 +89,22 @@ class HandheldInfoApiTests(TempHandheldCase, APITestCase):
         response = self.client.get(reverse("handheld-download"))
         self.assertEqual(response.status_code, 200)
         self.assertIn('filename="birdROMs.muxapp"', response["Content-Disposition"])
-        self.assertEqual(b"".join(response.streaming_content), self.target.read_bytes())
+        with zipfile.ZipFile(io.BytesIO(b"".join(response.streaming_content))) as archive:
+            names = set(archive.namelist())
+            seed = json.loads(archive.read("birdROMs/server.json"))
+        self.assertEqual(names, {"birdROMs/birdroms", "birdROMs/mux_launch.sh", "birdROMs/mux_lang.ini", "birdROMs/server.json"})
+        self.assertEqual(seed, {"server_url": "http://testserver"})
+
+
+class PersonalizedPackageTests(TempHandheldCase, SimpleTestCase):
+    def test_replaces_an_existing_seed_and_keeps_other_entries(self):
+        self.target.parent.mkdir(parents=True)
+        build_muxapp(self.target, names=("birdROMs/birdroms", "birdROMs/mux_launch.sh", "birdROMs/server.json"))
+        with personalized_package("https://birds.example/") as package:
+            with zipfile.ZipFile(package) as archive:
+                self.assertEqual(sorted(archive.namelist()), ["birdROMs/birdroms", "birdROMs/mux_launch.sh", "birdROMs/server.json"])
+                self.assertEqual(json.loads(archive.read("birdROMs/server.json")), {"server_url": "https://birds.example"})
+                self.assertEqual(archive.read("birdROMs/birdroms"), b"x")
 
 
 class HandheldInfoUnitTests(TempHandheldCase, SimpleTestCase):
