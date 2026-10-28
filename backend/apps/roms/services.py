@@ -60,7 +60,15 @@ EXTENSION_TO_PLATFORM = {
     ".7z": ARCHIVE,
 }
 
+# Allowed for upload.
 SUPPORTED_EXTENSIONS = frozenset(EXTENSION_TO_PLATFORM)
+# Every known single-file ROM/disc format: what a library scan imports and what a title drops.
+ROM_EXTENSIONS = SUPPORTED_EXTENSIONS | frozenset(
+    {
+        ".rom", ".mgw", ".p8", ".min", ".vb", ".pak", ".a52", ".fds", ".sgx", ".col", ".adf", ".d64",
+        ".t64", ".prg", ".dsk", ".st", ".msa", ".mx1", ".mx2",
+    }
+)  # fmt: skip
 SUPPORTED_PLATFORMS = tuple(sorted(set(EXTENSION_TO_PLATFORM.values())))
 
 
@@ -130,7 +138,7 @@ def parse_rom_filename(name: str) -> ParsedName:
     """Split a ROM file name into a clean display title and region/dump tags."""
     stem = name
     first_extension = ""
-    while (extension := get_extension(stem)) in SUPPORTED_EXTENSIONS:
+    while (extension := get_extension(stem)) in ROM_EXTENSIONS:
         first_extension = first_extension or extension
         stem = stem[: -len(extension)]
     if " " not in stem:

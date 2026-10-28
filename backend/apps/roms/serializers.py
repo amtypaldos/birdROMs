@@ -2,15 +2,20 @@ import os
 import re
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
+from django.utils import timezone
 from django.template.defaultfilters import filesizeformat
 from django.urls import reverse
 from rest_framework import serializers
 
 from .cover_art import METADATA_FIELDS
+from .library import LibraryUnavailable, get_library
 from .models import ROM, Playlist, PlaylistItem
-from .services import SUPPORTED_EXTENSIONS, get_extension, parse_rom_filename
+from .platform_aliases import UNSORTED_FOLDER, muos_folder_for
+from .services import SUPPORTED_EXTENSIONS, classify_platform_from_extension, get_extension, parse_rom_filename
 
+LIBRARY_UNAVAILABLE = "The ROM library is unavailable."
+FILE_REPLACE_REFUSED = "A ROM's file can't be replaced; upload it as a new file."
 CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 
@@ -25,7 +30,8 @@ def clean_upload_name(name):
 
 
 class ROMSerializer(serializers.ModelSerializer):
-    uploaded_by_username = serializers.CharField(source="uploaded_by.username", read_only=True)
+    # Null for games found by a library scan.
+    uploaded_by_username = serializers.CharField(source="uploaded_by.username", read_only=True, allow_null=True)
     # The stored file is upload-only; clients download via the authenticated endpoint.
     file = serializers.FileField(write_only=True)
     download_url = serializers.SerializerMethodField()
@@ -60,14 +66,61 @@ class ROMSerializer(serializers.ModelSerializer):
         return title
 
     def create(self, validated_data):
-        filename = clean_upload_name(validated_data["file"].name)
+        """Write the upload into the library (`<systems>/<muOS folder>/<name>`), never over a file."""
+        upload = validated_data["file"]
+        filename = clean_upload_name(upload.name)
         parsed = parse_rom_filename(filename)
-        validated_data["filename"] = filename
-        validated_data["tags"] = list(parsed.tags)
-        validated_data["title"] = (validated_data.get("title") or "").strip() or parsed.title[:255]
-        return super().create(validated_data)
+        platform = validated_data.get("platform") or classify_platform_from_extension(filename)
+        folder = muos_folder_for(platform)
+        library = get_library()
+        try:
+            systems = library.systems_prefix
+            folder = library.system_folder(systems, folder) if folder else UNSORTED_FOLDER
+            path = "/".join(part for part in (systems, folder, filename) if part)
+        except LibraryUnavailable:
+            raise serializers.ValidationError({"file": [LIBRARY_UNAVAILABLE]})
+        # A row whose file vanished (flagged `missing` or not yet noticed by a scan) is restored by the upload rather than duplicated.
+        stale = ROM.objects.filter(file=path).first()
+        try:
+            library.write_new(path, upload)
+        except FileExistsError:
+            raise serializers.ValidationError({"file": [f"{filename} is already in the library."]})
+        except PermissionError:
+            raise serializers.ValidationError({"file": ["Uploads are disabled: the ROM library is read-only."]})
+        except LibraryUnavailable:
+            raise serializers.ValidationError({"file": [LIBRARY_UNAVAILABLE]})
+        except ValueError:
+            raise serializers.ValidationError({"file": ["This file name cannot be stored in the library."]})
+        validated_data.update(
+            file=path,
+            filename=filename,
+            tags=list(parsed.tags),
+            title=(validated_data.get("title") or "").strip() or parsed.title[:255],
+            platform=platform,
+            source="upload",
+            size_bytes=upload.size,
+            modified_at=library.modified_time(path),  # what the next scan sees: no false "changed"
+            missing=False,
+            uploaded_at=timezone.now(),
+        )
+        if stale is None:
+            try:
+                with transaction.atomic():
+                    return super().create(validated_data)
+            except IntegrityError:
+                # A scan imported the just-published file first: its row becomes the upload's.
+                stale = ROM.objects.filter(file=path).first()
+                if stale is None:
+                    raise
+        for field, value in validated_data.items():
+            setattr(stale, field, value)
+        stale.save()
+        return stale
 
     def validate_file(self, file):
+        # A stored file is never replaced (library files are only ever created, see `create`).
+        if self.instance is not None:
+            raise serializers.ValidationError(FILE_REPLACE_REFUSED)
         # Uploads are untrusted: only known ROM/archive extensions, within the size cap.
         # Empty files are already rejected by FileField (allow_empty_file=False).
         extension = get_extension(file.name)
@@ -92,7 +145,7 @@ class ROMSerializer(serializers.ModelSerializer):
         return self._api_url("rom-download", obj)
 
     def get_cover_art_url(self, obj):
-        return self._api_url("rom-cover", obj) if obj.cover_art else None
+        return self._api_url("rom-cover", obj) if obj.cover_art or obj.cover_path else None
 
 
 class DeviceROMSerializer(serializers.ModelSerializer):
@@ -108,15 +161,17 @@ class DeviceROMSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_size_bytes(self, obj):
-        # Reads from the configured storage (a HEAD request on S3). A missing or unreachable
-        # file must not break the whole listing, so the size is simply unknown.
+        # The size recorded by the scan or upload; else read from the storage (a HEAD request on
+        # S3). A missing or unreachable file must not break the whole listing: size unknown.
+        if obj.size_bytes is not None:
+            return obj.size_bytes
         try:
             return obj.file.size
         except Exception:
             return None
 
     def get_cover_url(self, obj):
-        if not obj.cover_art:
+        if not (obj.cover_art or obj.cover_path):
             return None
         path = reverse("rom-cover", args=[obj.pk])
         request = self.context.get("request")
@@ -161,17 +216,17 @@ class PlaylistSerializer(serializers.ModelSerializer):
         read_only_fields = ["created_by", "created_at"]
 
     def get_rom_count(self, obj):
-        return len(obj.items.all())
+        return sum(1 for item in obj.items.all() if not item.rom.missing)
 
     def get_roms(self, obj):
         # `items` is prefetched (with `rom`) by the viewset and ordered by `PlaylistItem.Meta`.
-        roms = [item.rom for item in obj.items.all()]
+        roms = [item.rom for item in obj.items.all() if not item.rom.missing]
         return DeviceROMSerializer(roms, many=True, context=self.context).data
 
     def validate_rom_ids(self, rom_ids):
         if len(set(rom_ids)) != len(rom_ids):
             raise serializers.ValidationError("A ROM can only appear once in a playlist.")
-        found = ROM.objects.in_bulk(rom_ids)  # One query for the whole list.
+        found = ROM.objects.filter(missing=False).in_bulk(rom_ids)  # One query for the whole list.
         missing = [pk for pk in rom_ids if pk not in found]
         if missing:
             raise serializers.ValidationError(f"Unknown ROM id(s): {', '.join(map(str, missing))}.")
@@ -193,9 +248,13 @@ class PlaylistSerializer(serializers.ModelSerializer):
         return playlist
 
     def _set_items(self, playlist, roms):
+        # Hidden (missing) games stay, after the visible ones, so they reappear if their file returns.
+        wanted = [rom.pk for rom in roms]
+        hidden_items = playlist.items.filter(rom__missing=True).order_by("order", "id")
+        hidden = [rom_id for rom_id in hidden_items.values_list("rom_id", flat=True) if rom_id not in wanted]
         playlist.items.all().delete()
         PlaylistItem.objects.bulk_create(
-            PlaylistItem(playlist=playlist, rom=rom, order=order) for order, rom in enumerate(roms)
+            PlaylistItem(playlist=playlist, rom_id=rom_id, order=order) for order, rom_id in enumerate(wanted + hidden)
         )
         # Drop any prefetched items so the response reflects the new order.
         getattr(playlist, "_prefetched_objects_cache", {}).pop("items", None)

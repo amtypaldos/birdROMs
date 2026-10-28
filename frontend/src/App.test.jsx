@@ -18,6 +18,8 @@ vi.mock("./api/client", () => ({
     listRoms: vi.fn(() => Promise.resolve(page([]))),
     listPlatforms: vi.fn(() => Promise.resolve([])),
     createRom: vi.fn(),
+    libraryStatus: vi.fn(() => Promise.resolve({ backend: "local", writable: true, write_covers: true, running: false, last_scan: null })),
+    rescanLibrary: vi.fn(),
     scrapeCover: vi.fn(),
     downloadRom: vi.fn(() => Promise.resolve()),
     coverObjectUrl: vi.fn(() => Promise.resolve("blob:cover")),
@@ -283,6 +285,34 @@ describe("App", () => {
     const formData = api.createRom.mock.calls[0][0];
     expect(formData.has("title")).toBe(false);
     expect(formData.get("file").name).toBe("Zelda (USA).nes");
+  });
+
+  it("shows an upload refusal from the API in the upload panel", async () => {
+    getToken.mockReturnValue("tok");
+    api.me.mockResolvedValueOnce({ id: 2, username: "root", email: "", role: "super_admin" });
+    api.listRoms.mockResolvedValue(page([]));
+    api.createRom.mockRejectedValue(new Error("This library is read-only."));
+
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("ROM file"), { target: { files: [new File(["x"], "a.nes")] } });
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
+
+    expect(await screen.findByText("This library is read-only.")).toBeInTheDocument();
+  });
+
+  it("renders a ROM card with no uploader and shows the library panel only to admins", async () => {
+    getToken.mockReturnValue("tok");
+    api.listRoms.mockResolvedValue(page([{ id: 1, title: "Zelda", platform: "NES", extension: ".nes", uploaded_by_username: null }]));
+
+    const { unmount } = render(<App />);
+    expect(await screen.findByRole("heading", { name: "Zelda" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Library scan" })).not.toBeInTheDocument();
+    unmount();
+
+    api.me.mockResolvedValueOnce({ id: 2, username: "root", email: "", role: "super_admin" });
+    render(<App />);
+    expect(await screen.findByRole("region", { name: "Library scan" })).toBeInTheDocument();
   });
 
   it("shows region and dump tags under the title, and nothing without tags", async () => {

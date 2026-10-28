@@ -12,6 +12,7 @@ from apps.roms.cover_art import parse_cover_art_settings
 from .auth_config import parse_allow_local_login, parse_auth_methods, parse_oidc_settings
 from .deploy_config import check_secret_key, parse_csv, parse_debug, parse_num_proxies, parse_proxy_settings
 from .huey_config import build_huey
+from .library_config import parse_library_settings
 from .storage import build_storages
 from .uploads import parse_max_upload_bytes
 
@@ -109,6 +110,9 @@ MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", BASE_DIR / "media"))
 # Default file storage for ROMs and cover art; see birdroms/storage.py and .env.example.
 STORAGES = build_storages(os.environ)
 
+# In-place ROM library (folder or S3); see birdroms/library_config.py and apps/roms/library.py.
+LIBRARY = parse_library_settings(os.environ)
+
 # Largest accepted ROM upload, in bytes (default 2 GiB); see birdroms/uploads.py.
 MAX_ROM_UPLOAD_BYTES = parse_max_upload_bytes(os.environ)
 
@@ -135,6 +139,9 @@ if TESTING:
     MEDIA_ROOT = Path(tempfile.mkdtemp(prefix="birdroms-test-media-"))
     STORAGES = build_storages({})
     atexit.register(shutil.rmtree, MEDIA_ROOT, ignore_errors=True)
+    _library_root = tempfile.mkdtemp(prefix="birdroms-test-library-")
+    LIBRARY = parse_library_settings({"LIBRARY_ROOT": _library_root})
+    atexit.register(shutil.rmtree, _library_root, ignore_errors=True)
     PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
     AUTH_METHODS = parse_auth_methods({})
     ALLOW_LOCAL_LOGIN = False
