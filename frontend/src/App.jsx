@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { OFFLINE_MESSAGE, isNetworkError } from "./offline";
 import { api, consumeOidcFragment, getToken, setToken } from "./api/client";
 import AddToPlaylist from "./AddToPlaylist";
+import LibraryStatusPanel from "./LibraryStatusPanel";
 import PlaylistsView from "./PlaylistsView";
 
 function LocalAuthForm({ onAuthed }) {
@@ -688,6 +689,7 @@ export default function App() {
             {view === "playlists" ? (
               me ? <PlaylistsView me={me} /> : <p className="muted loading-text">Loading account…</p>
             ) : null}
+            {view === "library" ? <LibraryStatusPanel me={me} /> : null}
             {view === "library" && canWrite ? <GlobalDropzone onUploaded={loadRoms} /> : null}
             {view === "library" && canWrite ? <UploadPanel onUploaded={loadRoms} /> : null}
             {view === "library" ? (
