@@ -46,18 +46,27 @@ async function request(path, options = {}) {
   return response.json();
 }
 
-// DRF refusals carry a `{detail}` body; rethrow just that message (other bodies keep their text).
-async function requestWithDetail(path, options) {
+// DRF refusals are `{detail}` or field errors like `{file: ["sentence"]}`. Return a readable sentence:
+// `detail`, else the first string in the first field's errors, else the raw text.
+function errorSentence(text) {
+  try {
+    const body = JSON.parse(text);
+    if (typeof body?.detail === "string") return body.detail;
+    const first = Object.values(body || {})[0];
+    const candidate = Array.isArray(first) ? first[0] : first;
+    if (typeof candidate === "string") return candidate;
+  } catch {
+    // not a JSON body; keep the raw text
+  }
+  return text;
+}
+
+async function requestWithMessage(path, options) {
   try {
     return await request(path, options);
   } catch (err) {
-    let message = String(err.message || err);
-    try {
-      message = JSON.parse(message).detail || message;
-    } catch {
-      // not a JSON body; keep the raw text
-    }
-    throw err.isNetworkError ? err : new Error(message);
+    if (err.isNetworkError) throw err;
+    throw new Error(errorSentence(String(err.message || err)));
   }
 }
 
@@ -151,14 +160,14 @@ export const api = {
     return request("/roms/platforms/");
   },
   createRom(formData) {
-    return requestWithDetail("/roms/", { method: "POST", body: formData });
+    return requestWithMessage("/roms/", { method: "POST", body: formData });
   },
   // Admin-only: library status (incl. the last scan) and on-demand rescans.
   libraryStatus() {
     return request("/library/status/");
   },
   rescanLibrary({ acceptRemovals = false } = {}) {
-    return requestWithDetail("/library/scan/", {
+    return requestWithMessage("/library/scan/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ accept_removals: acceptRemovals })
