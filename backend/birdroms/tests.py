@@ -102,6 +102,34 @@ class ProxySettingsTests(SimpleTestCase):
             parse_proxy_settings({"DJANGO_BEHIND_HTTPS_PROXY": "maybe"})
 
 
+class PublicUrlBehindProxyTests(SimpleTestCase):
+    """The public https URL must be rebuilt from the proxy's headers (e.g. for absolute links)."""
+
+    def _absolute_root(self, behind_proxy, **headers):
+        from django.test import RequestFactory, override_settings
+
+        proxy = parse_proxy_settings({"DJANGO_BEHIND_HTTPS_PROXY": "True" if behind_proxy else "False"})
+        with override_settings(
+            ALLOWED_HOSTS=["roms.example.com"], SECURE_PROXY_SSL_HEADER=proxy["SECURE_PROXY_SSL_HEADER"]
+        ):
+            request = RequestFactory().get("/api/anything/", **headers)
+            return request.build_absolute_uri("/")
+
+    def test_forwarded_proto_and_host_give_the_public_https_url(self):
+        url = self._absolute_root(True, HTTP_HOST="roms.example.com", HTTP_X_FORWARDED_PROTO="https")
+        self.assertEqual(url, "https://roms.example.com/")
+
+    def test_without_the_proxy_setting_the_scheme_is_http(self):
+        url = self._absolute_root(False, HTTP_HOST="roms.example.com", HTTP_X_FORWARDED_PROTO="https")
+        self.assertEqual(url, "http://roms.example.com/")
+
+    def test_host_outside_allowed_hosts_is_rejected(self):
+        from django.core.exceptions import DisallowedHost
+
+        with self.assertRaises(DisallowedHost):
+            self._absolute_root(True, HTTP_HOST="evil.example.net", HTTP_X_FORWARDED_PROTO="https")
+
+
 class HueyConfigTests(SimpleTestCase):
     def test_huey_immediate_in_debug(self):
         huey = build_huey({}, debug=True)
