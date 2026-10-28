@@ -22,7 +22,12 @@ vi.mock("./api/client", () => ({
     downloadRom: vi.fn(() => Promise.resolve()),
     coverObjectUrl: vi.fn(() => Promise.resolve("blob:cover")),
     coverExists: vi.fn(() => Promise.resolve(false)),
-    approveDevice: vi.fn(() => Promise.resolve({ detail: "Device approved." }))
+    approveDevice: vi.fn(() => Promise.resolve({ detail: "Device approved." })),
+    listPlaylists: vi.fn(() => Promise.resolve([])),
+    getPlaylist: vi.fn(),
+    createPlaylist: vi.fn(),
+    updatePlaylist: vi.fn(),
+    deletePlaylist: vi.fn()
   }
 }));
 
@@ -618,5 +623,58 @@ describe("approve device page", () => {
 
     expect(await screen.findByText("ROM Library")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Approve device" })).not.toBeInTheDocument();
+  });
+});
+
+describe("App playlists", () => {
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("switches between Library and Playlists with the nav and the address bar hash", async () => {
+    getToken.mockReturnValue("abc123");
+    api.listRoms.mockResolvedValue(page([{ id: 1, title: "Zelda", platform: "NES", extension: ".nes" }]));
+    api.listPlaylists.mockResolvedValue([{ id: 3, name: "Road trip", created_by: 1, rom_count: 2 }]);
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "ROM Library" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Playlists" }));
+
+    expect(await screen.findByRole("heading", { name: "Playlists" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Road trip/ })).toBeInTheDocument();
+    expect(window.location.hash).toBe("#/playlists");
+    expect(screen.queryByRole("heading", { name: "ROM Library" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Library" }));
+    expect(await screen.findByRole("heading", { name: "ROM Library" })).toBeInTheDocument();
+    expect(window.location.hash).toBe("");
+    getToken.mockReset();
+    getToken.mockReturnValue(null);
+  });
+
+  it("opens straight to playlists from #/playlists", async () => {
+    window.history.replaceState(null, "", "/#/playlists");
+    getToken.mockReturnValue("abc123");
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Playlists" })).toBeInTheDocument();
+    getToken.mockReset();
+    getToken.mockReturnValue(null);
+  });
+
+  it("offers Add to playlist on ROM cards", async () => {
+    getToken.mockReturnValue("abc123");
+    api.listRoms.mockResolvedValue(page([{ id: 1, title: "Zelda", platform: "NES", extension: ".nes" }]));
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: "Add Zelda to a playlist" })).toBeInTheDocument();
+    getToken.mockReset();
+    getToken.mockReturnValue(null);
+  });
+
+  it("does not show the nav on the login screen", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Login" });
+    expect(screen.queryByRole("button", { name: "Playlists" })).not.toBeInTheDocument();
   });
 });

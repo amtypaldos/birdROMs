@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, consumeOidcFragment, getToken, setToken } from "./api/client";
+import AddToPlaylist from "./AddToPlaylist";
+import PlaylistsView from "./PlaylistsView";
 
 function LocalAuthForm({ onAuthed }) {
   const [mode, setMode] = useState("login");
@@ -399,7 +401,7 @@ function CoverPlaceholder({ rom }) {
   );
 }
 
-function RomCard({ rom, onScrape, onDownload }) {
+function RomCard({ rom, me, onScrape, onDownload }) {
   const family = platformFamily(rom.platform);
   return (
     <li className="rom-card" data-family={family}>
@@ -414,6 +416,7 @@ function RomCard({ rom, onScrape, onDownload }) {
       <div className="rom-actions">
         <button className="primary" onClick={() => onDownload(rom)}>Download</button>
         {onScrape ? <button className="ghost" onClick={() => onScrape(rom.id)}>Scrape Cover</button> : null}
+        {me ? <AddToPlaylist rom={rom} me={me} /> : null}
       </div>
     </li>
   );
@@ -421,7 +424,7 @@ function RomCard({ rom, onScrape, onDownload }) {
 
 const SKELETON_CARDS = 8;
 
-function RomList({ romPage, loading, query, platforms, onQuery, onScrape, onDownload }) {
+function RomList({ romPage, loading, query, platforms, me, onQuery, onScrape, onDownload }) {
   const showSkeleton = loading && romPage.results.length === 0;
   return (
     <section className="library" aria-busy={loading}>
@@ -445,7 +448,7 @@ function RomList({ romPage, loading, query, platforms, onQuery, onScrape, onDown
       {romPage.results.length > 0 ? (
         <ul className="rom-grid" aria-label="ROMs">
           {romPage.results.map((rom) => (
-            <RomCard key={rom.id} rom={rom} onScrape={onScrape} onDownload={onDownload} />
+            <RomCard key={rom.id} rom={rom} me={me} onScrape={onScrape} onDownload={onDownload} />
           ))}
         </ul>
       ) : null}
@@ -532,6 +535,24 @@ function SessionBar({ me, onRefresh, onLogout }) {
   );
 }
 
+// No router: the address-bar hash picks the view (`#/playlists`, anything else is the library).
+function viewFromHash() {
+  return window.location.hash.replace(/\/$/, "") === "#/playlists" ? "playlists" : "library";
+}
+
+function ViewNav({ view, onView }) {
+  return (
+    <nav className="view-nav" aria-label="Sections">
+      <button className={view === "library" ? "primary" : "ghost"} aria-current={view === "library"} onClick={() => onView("library")}>
+        Library
+      </button>
+      <button className={view === "playlists" ? "primary" : "ghost"} aria-current={view === "playlists"} onClick={() => onView("playlists")}>
+        Playlists
+      </button>
+    </nav>
+  );
+}
+
 // Pick up an SSO callback result before the first render so the app starts signed in.
 function initialAuth() {
   const result = consumeOidcFragment();
@@ -546,6 +567,7 @@ export default function App() {
   const [query, setQuery] = useState(DEFAULT_QUERY);
   const [platforms, setPlatforms] = useState([]);
   const latestRequest = useRef(0);
+  const [view, setView] = useState(viewFromHash);
   const [authed, setAuthed] = useState(initial.authed);
   const [error, setError] = useState(initial.error);
   const [authConfig, setAuthConfig] = useState(null);
@@ -588,6 +610,21 @@ export default function App() {
     }
   }, [authed, authConfig]);
 
+  useEffect(() => {
+    const sync = () => setView(viewFromHash());
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
+
+  function changeView(next) {
+    window.history.replaceState(
+      null,
+      "",
+      window.location.pathname + window.location.search + (next === "playlists" ? "#/playlists" : "")
+    );
+    setView(next);
+  }
+
   async function downloadRom(rom) {
     try {
       await api.downloadRom(rom);
@@ -628,17 +665,24 @@ export default function App() {
         {!authed ? <AuthPanel config={authConfig} onAuthed={() => setAuthed(true)} /> : null}
         {authed && !pairing ? (
           <>
-            {canWrite ? <GlobalDropzone onUploaded={loadRoms} /> : null}
-            {canWrite ? <UploadPanel onUploaded={loadRoms} /> : null}
+            <ViewNav view={view} onView={changeView} />
+            {view === "playlists" ? (
+              me ? <PlaylistsView me={me} /> : <p className="muted loading-text">Loading account…</p>
+            ) : null}
+            {view === "library" && canWrite ? <GlobalDropzone onUploaded={loadRoms} /> : null}
+            {view === "library" && canWrite ? <UploadPanel onUploaded={loadRoms} /> : null}
+            {view === "library" ? (
             <RomList
               romPage={romPage}
               loading={loading}
               query={query}
               platforms={platforms}
+              me={me}
               onQuery={setQuery}
               onScrape={canWrite ? async (id) => { await api.scrapeCover(id); await loadRoms(); } : null}
               onDownload={downloadRom}
             />
+            ) : null}
           </>
         ) : null}
       </main>
