@@ -77,16 +77,16 @@ is wrong; with `access denied`, the server's export list does not include this h
 fixed when the volume is created: to change them run `docker compose down`, then
 `docker volume rm <project>_birdroms_library`, then start again.
 
-**Write access.** The app runs as uid/gid 999 and must be able to create files in the library
+**Write access.** The app runs as uid/gid 568 and must be able to create files in the library
 (uploads, covers). Check it before the first start, with the share mounted:
 
 ```bash
-docker run --rm -u 999:999 -v <project>_birdroms_library:/library alpine \
+docker run --rm -u 568:568 -v <project>_birdroms_library:/library alpine \
   sh -c 'touch /library/.write-test && rm /library/.write-test && echo writable'
 ```
 
-If it is not writable, either change the export (squash all clients to uid/gid 999, e.g.
-`all_squash,anonuid=999,anongid=999`), `chown`/`chmod` the folders on the server, or run read-only
+If it is not writable, either change the export (squash all clients to uid/gid 568, e.g.
+`all_squash,anonuid=568,anongid=568`), `chown`/`chmod` the folders on the server, or run read-only
 with `LIBRARY_READ_ONLY=true` (uploads and cover write-back are then off). A stale-mount NAS
 outage cannot make birdROMs mark everything missing: a scan that would hide more than 25% of the
 known ROMs aborts (see [Scans](#5-first-scan)).

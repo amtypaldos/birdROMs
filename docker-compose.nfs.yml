@@ -10,7 +10,7 @@
 #
 # The Docker host needs an NFS client (Debian/Ubuntu: apt install nfs-common). Docker mounts the
 # share when the containers start, so they refuse to start while the server is unreachable
-# instead of scanning an empty folder. The container user (uid 999) must be able to write to the
+# instead of scanning an empty folder. The container user (uid 568) must be able to write to the
 # export, or set LIBRARY_READ_ONLY=true. Mount options are fixed when the volume is created; to
 # change them, stop the stack and `docker volume rm <project>_birdroms_library`.
 # See docs/deploying.md.
