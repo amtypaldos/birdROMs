@@ -1,8 +1,11 @@
+import errno
 import os
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
+from django.core.files.base import File
 from django.test import SimpleTestCase
 
 from apps.roms.library import (
@@ -183,6 +186,84 @@ class FilesystemLibraryTests(SimpleTestCase):
         self.touch("ROMS/SFC/Game.sfc", b"abcd")
         storage = FilesystemLibrary(str(self.root), False).storage
         self.assertEqual(Path(storage.path("ROMS/SFC/Game.sfc")), self.root / "ROMS/SFC/Game.sfc")
+
+
+
+class Chunks(File):
+    """An upload that calls `during()` before each chunk (and can fail part-way)."""
+
+    def __init__(self, parts, during=lambda: None):
+        super().__init__(None, name="upload")
+        self.parts, self.during = parts, during
+
+    def chunks(self, chunk_size=None):
+        for part in self.parts:
+            self.during()
+            if isinstance(part, Exception):
+                raise part
+            yield part
+
+
+class WriteNewPublishTests(SimpleTestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.folder = self.root / "ROMS/SFC"
+        self.target = self.folder / "A.sfc"
+        self.library = FilesystemLibrary(str(self.root), False)
+
+    def names(self):
+        return sorted(p.name for p in self.folder.iterdir()) if self.folder.exists() else []
+
+    def test_partial_file_is_never_visible_under_the_final_name(self):
+        seen = []
+        self.library.write_new("ROMS/SFC/A.sfc", Chunks([b"a", b"b"], lambda: seen.append(self.names())))
+        self.assertEqual(self.target.read_bytes(), b"ab")
+        self.assertEqual(self.names(), ["A.sfc"])
+        for names in seen[1:]:
+            self.assertNotIn("A.sfc", names)
+            self.assertEqual(len(names), 1)
+            self.assertTrue(names[0].startswith(".A.sfc.") and names[0].endswith(".part"), names)
+
+    def test_failed_write_leaves_no_file_and_no_temp(self):
+        with self.assertRaises(OSError):
+            self.library.write_new("ROMS/SFC/A.sfc", Chunks([b"a", OSError("disk full")]))
+        self.assertEqual(self.names(), [])
+
+    def test_file_created_during_the_write_is_kept(self):
+        def theirs():
+            if self.folder.exists() and not self.target.exists():
+                self.target.write_bytes(b"theirs")
+
+        with self.assertRaises(FileExistsError):
+            self.library.write_new("ROMS/SFC/A.sfc", Chunks([b"a", b"b"], theirs))
+        self.assertEqual(self.target.read_bytes(), b"theirs")
+        self.assertEqual(self.names(), ["A.sfc"])
+
+    def test_without_hard_links_it_writes_in_place(self):
+        with mock.patch("apps.roms.library.os.link", side_effect=PermissionError(errno.EPERM, "no links")):
+            self.library.write_new("ROMS/SFC/A.sfc", b"plain")
+        self.assertEqual(self.target.read_bytes(), b"plain")
+        self.assertEqual(self.names(), ["A.sfc"])
+
+    def test_without_hard_links_a_racing_file_is_kept(self):
+        def theirs():
+            if self.folder.exists() and not self.target.exists():
+                self.target.write_bytes(b"theirs")
+
+        with (
+            mock.patch("apps.roms.library.os.link", side_effect=PermissionError(errno.EPERM, "no links")),
+            self.assertRaises(FileExistsError),
+        ):
+            self.library.write_new("ROMS/SFC/A.sfc", Chunks([b"a"], theirs))
+        self.assertEqual(self.target.read_bytes(), b"theirs")
+        self.assertEqual(self.names(), ["A.sfc"])
+
+    def test_long_names_get_a_short_enough_temp(self):
+        name = "x" * 251 + ".sfc"
+        self.library.write_new(f"ROMS/SFC/{name}", b"long")
+        self.assertEqual(self.names(), [name])
 
 
 class FakeObject:

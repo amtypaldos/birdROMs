@@ -4,7 +4,10 @@ on a folder or in an S3 bucket, listed in place.
 birdROMs never deletes, moves or overwrites anything here; `write_new` only creates files.
 """
 
+import contextlib
 import os
+import secrets
+import shutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -17,6 +20,8 @@ from django.core.files.storage import FileSystemStorage, Storage
 
 SYSTEMS_FOLDERS = ("ROMS", "Roms")
 IMGS_FOLDER = "imgs"
+# Upload temp names (`.<name>.<8 hex>.part`) stay under the 255-byte name limit.
+TEMP_NAME_KEEP = 200
 
 
 class LibraryUnavailable(Exception):
@@ -195,11 +200,28 @@ class FilesystemLibrary(Library):
             raise LibraryUnavailable(f"Cannot list the library at {self.root}: {exc}") from exc
 
     def _write(self, path, content):
+        """Write a hidden `.<name>.<random>.part` beside the target, then publish it with a hard
+        link (atomic, and fails if the target appeared meanwhile), so a partial upload is never
+        seen under its final name. Without hard links the temp is copied in place ("x": never
+        over a file)."""
         target = self.storage.path(path)
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "xb") as handle:  # "x": fail rather than overwrite on a race
-            for chunk in content.chunks():
-                handle.write(chunk)
+        folder, name = os.path.split(target)
+        os.makedirs(folder, exist_ok=True)
+        temp = os.path.join(folder, f".{name[:TEMP_NAME_KEEP]}.{secrets.token_hex(4)}.part")
+        try:
+            with open(temp, "xb") as handle:
+                for chunk in content.chunks():
+                    handle.write(chunk)
+            try:
+                os.link(temp, target)
+            except FileExistsError:
+                raise
+            except OSError:  # no hard links here (exFAT, some SMB shares)
+                with open(temp, "rb") as source, open(target, "xb") as handle:
+                    shutil.copyfileobj(source, handle)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temp)
 
 
 class S3Library(Library):
