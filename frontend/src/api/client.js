@@ -1,3 +1,5 @@
+import { offlineError } from "../offline";
+
 const API_BASE = (import.meta.env.VITE_API_BASE || "/api").replace(/\/$/, "");
 
 export function getToken() {
@@ -20,10 +22,15 @@ async function rawRequest(path, options = {}) {
   if (token) {
     headers.Authorization = `Token ${token}`;
   }
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers
-  });
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers
+    });
+  } catch {
+    throw offlineError();
+  }
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || "Request failed");

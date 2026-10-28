@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { OFFLINE_MESSAGE, isNetworkError } from "./offline";
 import { api, consumeOidcFragment, getToken, setToken } from "./api/client";
 
 function LocalAuthForm({ onAuthed }) {
@@ -551,6 +552,7 @@ export default function App() {
   const [authConfig, setAuthConfig] = useState(null);
   const [me, setMe] = useState(null);
   const [loading, setLoading] = useState(initial.authed);
+  const [offline, setOffline] = useState(false);
 
   // Only the newest request may update the list, so a slow response for an old filter
   // cannot overwrite the results of a newer one.
@@ -563,9 +565,11 @@ export default function App() {
       setRomPage(data);
       setPlatforms(platformList);
       setError("");
+      setOffline(false);
     } catch (err) {
       if (requestId !== latestRequest.current) return;
-      setError(String(err.message || err));
+      if (isNetworkError(err)) setOffline(true);
+      else setError(String(err.message || err));
     } finally {
       if (requestId === latestRequest.current) setLoading(false);
     }
@@ -573,9 +577,19 @@ export default function App() {
 
   useEffect(() => {
     if (authed) {
-      api.me().then(setMe, () => logout());
+      // An unreachable server is not a bad session: stay signed in and let the offline notice show.
+      api.me().then(setMe, (err) => {
+        if (!isNetworkError(err)) logout();
+      });
     }
   }, [authed]);
+
+  useEffect(() => {
+    if (!authed) return undefined;
+    const retry = () => loadRoms();
+    window.addEventListener("online", retry);
+    return () => window.removeEventListener("online", retry);
+  }, [authed, loadRoms]);
 
   useEffect(() => {
     if (authed) loadRoms();
@@ -584,7 +598,10 @@ export default function App() {
 
   useEffect(() => {
     if (!authed && !authConfig) {
-      api.authConfig().then(setAuthConfig, (err) => setError(String(err.message || err)));
+      api.authConfig().then(setAuthConfig, (err) => {
+        if (isNetworkError(err)) setOffline(true);
+        else setError(String(err.message || err));
+      });
     }
   }, [authed, authConfig]);
 
@@ -593,7 +610,8 @@ export default function App() {
       await api.downloadRom(rom);
       setError("");
     } catch (err) {
-      setError(String(err.message || err));
+      if (isNetworkError(err)) setOffline(true);
+      else setError(String(err.message || err));
     }
   }
 
@@ -623,6 +641,7 @@ export default function App() {
         {authed ? <SessionBar me={me} onRefresh={loadRoms} onLogout={logout} /> : null}
       </header>
       <main className={`container${authed && !pairing ? "" : " container-auth"}`}>
+        {offline ? <p className="offline banner" role="status">{OFFLINE_MESSAGE}</p> : null}
         {error ? <p className="error banner" role="alert">{error}</p> : null}
         {pairing ? <ApprovePanel code={pairing.code} authed={authed} onDone={leavePairing} /> : null}
         {!authed ? <AuthPanel config={authConfig} onAuthed={() => setAuthed(true)} /> : null}

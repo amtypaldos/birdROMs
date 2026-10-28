@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { isNetworkError } from "../offline";
 import { api, consumeOidcFragment, filenameFromDisposition, getToken, setToken } from "./client";
 
 function mockLocalStorage() {
@@ -30,6 +31,23 @@ describe("api client", () => {
     setToken(null);
     expect(storage.removeItem).toHaveBeenCalledWith("birdroms_token");
     expect(getToken()).toBeNull();
+  });
+
+  it("flags a failed fetch (no response at all) as a network error", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+
+    const err = await api.me().catch((e) => e);
+
+    expect(isNetworkError(err)).toBe(true);
+  });
+
+  it("does not flag an HTTP error status as a network error", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500, text: () => Promise.resolve("boom") }));
+
+    const err = await api.me().catch((e) => e);
+
+    expect(err.message).toBe("boom");
+    expect(isNetworkError(err)).toBe(false);
   });
 
   it("attaches the Authorization header when a token is set", async () => {
