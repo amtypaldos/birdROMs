@@ -107,6 +107,15 @@ class HideMissingTests(LibraryRootTestCase):
         self.assertEqual([r["id"] for r in detail["roms"]], [other.pk, self.present.pk, self.gone.pk])
 
 
+    def test_replacing_with_a_rom_that_just_went_missing_lists_it_once(self):
+        from apps.roms.serializers import PlaylistSerializer
+
+        playlist = Playlist.objects.create(name="Mix", created_by=self.admin)
+        PlaylistItem.objects.create(playlist=playlist, rom=self.gone, order=0)
+        PlaylistSerializer()._set_items(playlist, [self.present, self.gone])  # validated before it vanished
+        self.assertEqual(list(playlist.items.values_list("rom_id", flat=True)), [self.present.pk, self.gone.pk])
+
+
 class LibraryDownloadAndCoverTests(LibraryRootTestCase):
     def setUp(self):
         super().setUp()

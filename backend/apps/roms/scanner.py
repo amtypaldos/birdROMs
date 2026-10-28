@@ -13,7 +13,12 @@ from django.utils import timezone
 from .library import IMGS_FOLDER, Library, LibraryUnavailable, get_library
 from .models import ROM, LibraryScan
 from .platform_aliases import UNSORTED_FOLDER, platform_for_folder, platform_for_game
-from .services import SUPPORTED_EXTENSIONS, classify_platform_from_extension, get_extension, parse_rom_filename
+from .services import (
+    SUPPORTED_EXTENSIONS,
+    classify_platform_from_extension,
+    get_extension,
+    parse_rom_filename,
+)
 
 GAME_EXTENSIONS = SUPPORTED_EXTENSIONS | frozenset(
     {

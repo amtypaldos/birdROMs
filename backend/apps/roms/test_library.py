@@ -267,6 +267,15 @@ class WriteNewPublishTests(SimpleTestCase):
         self.assertEqual(self.target.read_bytes(), b"theirs")
         self.assertEqual(self.names(), ["A.sfc"])
 
+    def test_without_hard_links_a_failed_copy_leaves_nothing(self):
+        with (
+            mock.patch("apps.roms.library.os.link", side_effect=PermissionError(errno.EPERM, "no links")),
+            mock.patch("apps.roms.library.shutil.copyfileobj", side_effect=OSError("disk full")),
+            self.assertRaises(OSError),
+        ):
+            self.library.write_new("ROMS/SFC/A.sfc", b"plain")
+        self.assertEqual(self.names(), [])
+
     def test_long_names_get_a_short_enough_temp(self):
         name = "x" * 251 + ".sfc"
         self.library.write_new(f"ROMS/SFC/{name}", b"long")
