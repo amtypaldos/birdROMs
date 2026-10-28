@@ -781,3 +781,209 @@ select:focus-visible {
 .upload-item.done .muted {
   color: var(--color-lime);
 }
+
+/* ---------- Views + playlists ---------- */
+
+.view-nav {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.add-to-playlist {
+  flex: 1 1 100%;
+}
+
+.add-to-playlist > button {
+  width: 100%;
+}
+
+.playlist-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+}
+
+.playlist-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.playlist-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+}
+
+.playlist-name {
+  flex: 1 1 auto;
+  font-weight: 600;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.playlist-head h2 {
+  margin: var(--space-3) 0 var(--space-1);
+  overflow-wrap: anywhere;
+}
+
+.playlist-edit,
+.picker-foot,
+.picker-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.playlist-edit input {
+  flex: 1 1 14rem;
+}
+
+.picker-head {
+  justify-content: space-between;
+}
+
+.picker-list {
+  max-height: 22rem;
+  margin: var(--space-3) 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.picker-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.picker-row {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.picker-row label {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  cursor: pointer;
+}
+
+/* Checkboxes must not inherit the text-input look (width, height, padding, border). */
+.picker-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 1.1rem;
+  min-height: 0;
+  height: 1.1rem;
+  padding: 0;
+  accent-color: var(--color-cyan);
+}
+
+.picker-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.picker-meta {
+  flex: 0 0 auto;
+  max-width: 40%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.add-status {
+  margin: var(--space-1) 0 0;
+  color: var(--color-lime);
+  font-size: 0.85rem;
+}
+
+/* The current tab must read as current regardless of hover or focus. */
+.view-nav button[aria-current="page"] {
+  background: var(--color-cyan);
+  border-color: var(--color-cyan);
+  color: var(--color-text-on-neon);
+}
+
+.view-nav button:not([aria-current]) {
+  background: transparent;
+  box-shadow: none;
+}
+
+.playlist-roms {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.playlist-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+}
+
+.playlist-cover {
+  display: grid;
+  flex: 0 0 3.5rem;
+  place-items: center;
+  width: 3.5rem;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-dim);
+  font-weight: 700;
+}
+
+.playlist-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.playlist-row-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.playlist-row-body .rom-title {
+  margin: 0;
+}
+
+.playlist-row-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-1);
+}
+
+button.danger {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
