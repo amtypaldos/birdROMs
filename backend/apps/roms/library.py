@@ -22,8 +22,8 @@ from .platform_aliases import platform_for_folder
 
 SYSTEMS_FOLDERS = ("ROMS", "Roms")
 IMGS_FOLDER = "imgs"
-# Upload temp names (`.<name>.<8 hex>.part`) stay under the 255-byte name limit.
-TEMP_NAME_KEEP = 200
+# Hidden upload temp name, short whatever the target's name (file names are capped at 255 bytes).
+TEMP_NAME = ".birdroms-upload.{}.part"
 
 
 class LibraryUnavailable(Exception):
@@ -247,14 +247,14 @@ class FilesystemLibrary(Library):
             raise LibraryUnavailable(f"Cannot list the library at {self.root}: {exc}") from exc
 
     def _write(self, path, content):
-        """Write a hidden `.<name>.<random>.part` beside the target, then publish it with a hard
-        link (atomic, and fails if the target appeared meanwhile), so a partial upload is never
-        seen under its final name. Without hard links the temp is copied in place ("x": never
-        over a file)."""
+        """Write a hidden `.birdroms-upload.<random>.part` beside the target, then publish it with
+        a hard link (atomic, and fails if the target appeared meanwhile), so a partial upload is
+        never seen under its final name. Without hard links the temp is copied in place ("x":
+        never over a file)."""
         target = self.storage.path(path)
-        folder, name = os.path.split(target)
+        folder = os.path.dirname(target)
         os.makedirs(folder, exist_ok=True)
-        temp = os.path.join(folder, f".{name[:TEMP_NAME_KEEP]}.{secrets.token_hex(4)}.part")
+        temp = os.path.join(folder, TEMP_NAME.format(secrets.token_hex(4)))
         try:
             with open(temp, "xb") as handle:
                 for chunk in content.chunks():

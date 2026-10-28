@@ -231,7 +231,15 @@ class WriteNewPublishTests(SimpleTestCase):
         for names in seen[1:]:
             self.assertNotIn("A.sfc", names)
             self.assertEqual(len(names), 1)
-            self.assertTrue(names[0].startswith(".A.sfc.") and names[0].endswith(".part"), names)
+            self.assertRegex(names[0], r"^\.birdroms-upload\.[0-9a-f]{8}\.part$")
+
+    def test_temp_name_fits_a_byte_limited_file_system_for_any_name(self):
+        name = "游" * 83 + ".sfc"  # 253 bytes in UTF-8
+        seen = []
+        self.library.write_new(f"ROMS/SFC/{name}", Chunks([b"a"], lambda: seen.append(self.names())))
+        self.assertEqual(self.names(), [name])
+        self.assertEqual(len(seen[0]), 1)
+        self.assertLessEqual(len(seen[0][0].encode()), 255, seen[0])
 
     def test_failed_write_leaves_no_file_and_no_temp(self):
         with self.assertRaises(OSError):

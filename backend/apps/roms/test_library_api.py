@@ -265,6 +265,13 @@ class LibraryUploadTests(LibraryRootTestCase):
         self.assertIsInstance(seen[0], File)
         self.assertEqual((self.root / "ROMS/SFC/Game.smc").read_bytes(), b"streamed")
 
+    def test_upload_with_a_long_multibyte_name(self):
+        name = "游" * 83 + ".smc"  # 253 bytes in UTF-8: fits as a file name, not with a long temp name
+        self.assertEqual(len(name.encode()), 253)
+        response = self.upload(name, platform="SNES")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(sorted(p.name for p in (self.root / "ROMS/SFC").iterdir()), [name])
+
     def test_upload_refused_when_read_only(self):
         with self.settings(LIBRARY=settings.LIBRARY.__class__(**{**settings.LIBRARY.__dict__, "read_only": True})):
             response = self.upload("Game.smc", platform="SNES")
