@@ -4,9 +4,9 @@
 
 **Goal:** Ship a v1 muOS handheld client that pairs to a birdROMs instance (QR / phone-approve), lets a friend browse Platforms + owner-created Playlists on a controller, and downloads ROMs into the correct per-system folders — plus the small birdROMs server additions that back it.
 
-**Architecture:** Two parts, two repos. **Part A** adds device pairing, playlists, a device-friendly listing API, and open upload to the existing Django/DRF backend (`birdROMs` repo). **Part B** is a single static ARM64 **Go + SDL2** binary packaged as a muOS `.muxzip` app (`birdroms-handheld` repo). The client talks to the Part A API over HTTPS with a scoped device token. ROCKNIX is a later wrapper, out of v1 scope.
+**Architecture:** Two parts, two repos. **Part A** adds device pairing, playlists, a device-friendly listing API, and open upload to the existing Django/DRF backend (`birdROMs` repo). **Part B** is a dynamic `GOARCH=arm64` **Go + SDL2** binary linked against the device's own SDL2/SDL2_ttf, packaged as a muOS **`.muxapp`** (`birdroms-handheld` repo). The client talks to the Part A API over HTTP(S) with a scoped device token. ROCKNIX is a later wrapper, out of v1 scope.
 
-**Tech Stack:** Part A — Python 3.11+, Django 5, DRF (+ a QR-approve page in the React frontend). Part B — Go (static `GOARCH=arm64`), SDL2 (`go-sdl2`), a Go QR encoder, bundled Chakra Petch TTF.
+**Tech Stack:** Part A — Python 3.11+, Django 5, DRF (+ a QR-approve page in the React frontend). Part B — Go (dynamic `GOARCH=arm64`, cgo, cross-compiled with `zig cc -target aarch64-linux-gnu.2.38`), SDL2 (`go-sdl2`) against the device's libraries, a Go QR encoder, bundled Chakra Petch TTF. Task runner is `just` (`test`, `build`, `deploy`, `run`).
 
 **Spec:** `docs/superpowers/specs/2026-10-27-handheld-client-design.md` (read it alongside this plan).
 
@@ -14,7 +14,7 @@
 
 - **Part A runs in the `birdROMs` repo; Part B runs in the `birdroms-handheld` repo** (github.com/amtypaldos/birdroms-handheld). They can execute as two separate SDD passes; do Part A first (B depends on its API).
 - Part A: Postgres everywhere; task defs via the Huey seam if any; every code change has a test; match existing birdROMs style; no secrets committed. Device tokens are **scoped and revocable**.
-- Part B: one **static** `arm64` binary (no runtime deps on the device); verify every device-specific fact (folder names, screen size, input, `.muxzip` layout, game-list refresh) **empirically over SSH** before coding against it — never guess. Visual parity with the web UI (dark/neon, cover-art-forward, Chakra Petch).
+- Part B: one **dynamic** `arm64` binary linked against the device's SDL2 / SDL2_ttf (glibc target ≥ 2.38; not a static binary — cgo needs the device's libs). Apps install as a muOS **`.muxapp`** (2606; not `.muxzip`). Verify every device-specific fact (folder names, screen size, input, `.muxapp` layout, game-list refresh) **empirically** before coding against it — never guess. Verified facts live in the handheld repo `docs/b1-device-recon.md`. Visual parity with the web UI (dark/neon, cover-art-forward, Chakra Petch).
 - **Permissions (v1):** any authenticated user can upload and create playlists (RBAC deferred).
 - Device/test loop uses the maintainer's RG40XX-V (muOS, upgraded) + RG35XX+ over SSH/SFTP; the device LAN IP + SSH access are provided at execution time.
 
@@ -99,35 +99,37 @@ Inputs the design implies but task happy-paths won't catch — each pinned to a 
 
 # Part B — Go/SDL handheld client (repo: `birdroms-handheld`)
 
-> Clone the empty repo first; scaffold lands in Task B2. Device-specific facts from B1 feed B6/B7.
+> B1 and B2 are done (local commits on `main`, not pushed). Device facts: handheld repo `docs/b1-device-recon.md`. Still unverified, and required before treating B6/B7 as done on device: game-list refresh after a download, and the exact internal zip layout of a `.muxapp`.
 
 ### Task B1: On-device verification (muOS) — SSH recon
 
-**Files:** Create `docs/device-notes-muos.md` in the client repo.
+**Files:** Create `docs/b1-device-recon.md` in the client repo. *(Done. The original name `docs/device-notes-muos.md` was not used.)*
 
-**Produces (document the verified facts):** exact `roms/<system>` folder names per platform on the upgraded muOS (SD1 `/mnt/mmc` vs SD2 `/mnt/sdcard`); screen resolution + input device/button mapping; the `.muxzip` "application" layout + launch-script convention for this muOS version; how the games list is refreshed after adding a ROM; whether SDL2 libs are present or must be bundled.
+**Produces (document the verified facts):** exact `Roms/<SYSTEM>` folder names per platform on the upgraded muOS (SD1 `/mnt/mmc` vs SD2 `/mnt/sdcard`); screen resolution + input device/button mapping; the `.muxapp` application layout + launch-script convention for this muOS version; how the games list is refreshed after adding a ROM; whether SDL2 libs are present or must be bundled.
 
 - [ ] **Step 1:** Over SSH/SFTP to the RG40XX-V: list the real ROM folders, check `/opt/muos` archive scripts for the app conventions, note resolution/input, test adding a dummy file and refreshing the list.
-- [ ] **Step 2:** Write `docs/device-notes-muos.md` with exact paths/names/values.
-- [ ] **Step 3: Commit** — `docs: verified muOS device facts (folders, muxzip, input, refresh)`.
+- [ ] **Step 2:** Write `docs/b1-device-recon.md` with exact paths/names/values.
+- [ ] **Step 3: Commit** — `docs: verified muOS device facts (folders, muxapp, input, refresh)`.
   *(No code; this is the empirical ground truth B6/B7 build on. Blocked until the device is upgraded + reachable.)*
 
-### Task B2: Repo scaffold + static ARM64 build + on-device "hello SDL"
+### Task B2: Repo scaffold + dynamic ARM64 build + on-device "hello SDL"
 
-**Files:** `go.mod`, `main.go`, `Makefile`/build script, `README.md`.
+**Files:** `go.mod`, `cmd/birdroms/main.go`, `justfile`, `README.md`. *(Done.)*
 
-**Produces:** a Go module that cross-compiles to a **static arm64** binary; an SDL2 fullscreen window that opens, shows "birdROMs" in Chakra Petch on the dark/neon theme, reads gamepad input, and exits on a button — **deployed to the device over SFTP and confirmed running over SSH**.
+**Produces:** a Go module that cross-compiles to a **dynamic arm64** binary against the device's SDL2; an SDL2 fullscreen window that opens, shows "birdROMs" in Chakra Petch on the dark/neon theme, reads gamepad input, and exits on a button — **installed under `/mnt/mmc/MUOS/application/birdROMs/` and confirmed by launching from the muOS Applications menu** (not by running the binary over SSH).
 
-- [ ] **Step 1:** Scaffold module + build to arm64; unit-test the build produces a static binary (CI check) and a trivial pure-Go unit (e.g. version string).
+- [ ] **Step 1:** Scaffold module + build to arm64; unit-test a trivial pure-Go unit (e.g. version string). The binary is dynamic (links the device's SDL2); do not require a static binary.
 - [ ] **Step 2:** Implement the SDL window + font + input loop.
-- [ ] **Step 3: On-device smoke** — SFTP the binary, run over SSH, confirm window + input on the RG40XX-V; record result in the report.
-- [ ] **Step 4: Commit** — `feat: SDL hello-world running on muOS (static arm64)`.
+- [ ] **Step 3: On-device smoke** — install into the application folder and launch from the muOS Applications menu (do not run the binary over SSH); confirm window + input on the RG40XX-V; record result in the report.
+- [ ] **Step 4: Commit** — `feat: SDL hello-world running on muOS (dynamic arm64)`.
 
 ### Task B3: Config/token store + API client
 
 **Files:** `internal/config/…`, `internal/api/…`, `*_test.go`.
 
 **Interfaces / Produces:** `config` loads/saves `{server_url, device_token}` to a file on the card; `api.Client` with `ListPlatforms()`, `ListROMs(platform, page)`, `ListPlaylists()`, `GetPlaylist(id)`, `DownloadROM(id, w, progressCb)` using `Authorization: Device <token>`.
+
+**Shipped Part A contract (binding; the method list above is the shorthand):** base URL has no trailing slash; every call sends `Authorization: Device <token>`. `GET /api/roms/platforms/` returns a JSON array of platform-name strings. `GET /api/roms/?fields=device&page=<n>` (add `platform=` only when non-empty) returns `{count, next, previous, results}` where each result is `{id, title, platform, extension, size_bytes, cover_url}` and `size_bytes` / `cover_url` may be null; default page size is 24. `GET /api/playlists/` is an unpaginated JSON array of `{id, name, created_by, created_at, rom_count}`. `GET /api/playlists/{id}/` returns that shape plus ordered `roms` in the device ROM shape. `GET /api/roms/{id}/download/` streams the file bytes. HTTP 401 (revoked or unknown token) is a distinct error the caller can detect. Config path is an argument (tests use a temp dir); absent file means unpaired; save mode `0600`. JSON keys are exactly `server_url` and `device_token`.
 
 - [ ] **Step 1: Failing Go tests** against an `httptest` mock server — auth header set; listing parsed; pagination; download streams bytes + reports progress; 401 on revoked token surfaced. *(Review Focus #5)*
 - [ ] **Step 2–4:** implement, `go test ./...` PASS, commit — `feat: config store + birdROMs API client`.
@@ -155,27 +157,27 @@ Inputs the design implies but task happy-paths won't catch — each pinned to a 
 
 **Files:** `internal/download/…`, `internal/platforms/muos_folders.go`, `*_test.go`.
 
-**Interfaces / Produces:** a queue that downloads selected ROMs **one/few at a time**, shows per-item progress, is **resumable/atomic** (write to a temp file, fsync, rename into place — never a half file in the games folder), and writes into the correct `roms/<system>` folder via the verified map from B1; **unknown platform → a safe visible fallback folder + a flag**, never a crash or silent drop; triggers the muOS game-list refresh.
+**Interfaces / Produces:** a queue that downloads selected ROMs **one/few at a time**, shows per-item progress, is **resumable/atomic** (write to a temp file, fsync, rename into place — never a half file in the games folder), and writes into the correct `Roms/<SYSTEM>` folder via the verified map from B1 (runtime ROM mount from `GET_VAR device storage/rom/mount`, which is `/mnt/sdcard` on the RG40XX-V — do not hardcode only that path); **unknown platform → a safe visible fallback folder + a flag**, never a crash or silent drop; triggers the muOS game-list refresh.
 
 - [ ] **Step 1: Failing tests** — platform→folder map (verified names from B1); atomic write (interrupted download leaves no file in the target); resume/retry; unknown-platform fallback. *(Review Focus #2, #3)*
 - [ ] **Step 2–3:** implement; **on-device smoke** — download a real ROM, confirm it lands in the right folder and appears in the muOS list after refresh.
 - [ ] **Step 4: Commit** — `feat: resumable download manager + muOS folder mapping`.
 
-### Task B7: muOS `.muxzip` packaging + end-to-end
+### Task B7: muOS `.muxapp` packaging + end-to-end
 
 **Files:** `packaging/muos/…`, build/release script.
 
-**Produces:** a `.muxzip` (per B1's verified layout) that installs the binary as a muOS **application**; a release script that builds + packages. **End-to-end on device:** install the `.muxzip`, launch from the Apps menu, pair via QR, browse, download, play.
+**Produces:** a `.muxapp` (per B1's verified layout: extracts to `/mnt/mmc/MUOS/application/<App>/`, launched by `mux_launch.sh`) that installs the binary as a muOS **application**; a release script that builds + packages. **End-to-end on device:** install the `.muxapp`, launch from the Apps menu, pair via QR, browse, download, play. The exact internal zip layout of a `.muxapp` was still unverified at the end of B1 — confirm it (inspect a real archive or a test install) before freezing the packager.
 
-- [ ] **Step 1:** Build the `.muxzip` per the verified spec; validate its structure.
+- [ ] **Step 1:** Build the `.muxapp` per the verified spec; validate its structure.
 - [ ] **Step 2: On-device end-to-end** — install, launch, pair, download, confirm a game runs on the RG40XX-V; record in the report.
-- [ ] **Step 3: Commit** — `feat: muOS .muxzip packaging + end-to-end`.
+- [ ] **Step 3: Commit** — `feat: muOS .muxapp packaging + end-to-end`.
 
 ---
 
 ## Self-Review
 
-**Spec coverage:** pairing/QR (A1,A2,B4) ✓ · playlists (A3, surfaced B5) ✓ · device listing w/ covers+size (A4) ✓ · open upload (A5) ✓ · Go+SDL static binary (B2) ✓ · browse+download into folders (B5,B6) ✓ · `.muxzip` packaging (B7) ✓ · web-UI visual parity (B2,B5) ✓ · on-device SSH verification first (B1) ✓ · muOS-only v1, ROCKNIX deferred ✓.
+**Spec coverage:** pairing/QR (A1,A2,B4) ✓ · playlists (A3, surfaced B5) ✓ · device listing w/ covers+size (A4) ✓ · open upload (A5) ✓ · Go+SDL dynamic binary (B2) ✓ · browse+download into folders (B5,B6) ✓ · `.muxapp` packaging (B7) ✓ · web-UI visual parity (B2,B5) ✓ · on-device verification first (B1) ✓ · muOS-only v1, ROCKNIX deferred ✓.
 
 **Review Focus:** #1→A1/B4, #2→B6, #3→B6, #4→A4/B5, #5→A1/B3 — each has a named test.
 
