@@ -26,7 +26,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MEDIA_ROOT=/data/media \
     STATIC_ROOT=/app/staticfiles
 RUN groupadd --system --gid 999 birdroms && useradd --system --uid 999 --gid 999 --home /app birdroms \
-    && mkdir -p /data/media /app/staticfiles && chown -R birdroms:birdroms /data /app
+    && mkdir -p /data/media /library /app/staticfiles && chown -R birdroms:birdroms /data /library /app
 WORKDIR /app
 COPY --from=deps /opt/venv /opt/venv
 EXPOSE 8000
