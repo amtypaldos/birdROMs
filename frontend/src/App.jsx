@@ -3,6 +3,7 @@ import { OFFLINE_MESSAGE, isNetworkError } from "./offline";
 import { api, consumeOidcFragment, getToken, setToken } from "./api/client";
 import AddToPlaylist from "./AddToPlaylist";
 import LibraryStatusPanel from "./LibraryStatusPanel";
+import HandheldView from "./HandheldView";
 import PlaylistsView from "./PlaylistsView";
 
 function LocalAuthForm({ onAuthed }) {
@@ -537,9 +538,11 @@ function SessionBar({ me, offline, onRefresh, onLogout }) {
   );
 }
 
-// No router: the address-bar hash picks the view (`#/playlists`, anything else is the library).
+// No router: the address-bar hash picks the view (`#/playlists`, `#/handheld`, anything else is the library).
 function viewFromHash() {
-  return window.location.hash.replace(/\/$/, "") === "#/playlists" ? "playlists" : "library";
+  const hash = window.location.hash.replace(/\/$/, "");
+  if (hash === "#/playlists") return "playlists";
+  return hash === "#/handheld" ? "handheld" : "library";
 }
 
 function ViewNav({ view, onView }) {
@@ -550,6 +553,9 @@ function ViewNav({ view, onView }) {
       </button>
       <button className={view === "playlists" ? "primary" : "ghost"} aria-current={view === "playlists" ? "page" : undefined} onClick={() => onView("playlists")}>
         Playlists
+      </button>
+      <button className={view === "handheld" ? "primary" : "ghost"} aria-current={view === "handheld" ? "page" : undefined} onClick={() => onView("handheld")}>
+        Handheld
       </button>
     </nav>
   );
@@ -638,7 +644,7 @@ export default function App() {
     window.history.replaceState(
       null,
       "",
-      window.location.pathname + window.location.search + (next === "playlists" ? "#/playlists" : "")
+      window.location.pathname + window.location.search + (next === "library" ? "" : `#/${next}`)
     );
     setView(next);
   }
@@ -689,6 +695,7 @@ export default function App() {
             {view === "playlists" ? (
               me ? <PlaylistsView me={me} /> : <p className="muted loading-text">Loading account…</p>
             ) : null}
+            {view === "handheld" ? <HandheldView /> : null}
             {view === "library" ? <LibraryStatusPanel me={me} /> : null}
             {view === "library" && canWrite ? <GlobalDropzone onUploaded={loadRoms} /> : null}
             {view === "library" && canWrite ? <UploadPanel onUploaded={loadRoms} /> : null}
