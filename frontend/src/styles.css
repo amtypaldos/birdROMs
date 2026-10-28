@@ -987,3 +987,47 @@ button.danger {
   border-color: var(--color-danger);
   color: var(--color-danger);
 }
+
+/* ---------- Library scan status (admin) ---------- */
+
+.library-status {
+  padding: var(--space-4);
+}
+
+.library-status-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.library-status-head h2 {
+  margin-bottom: 0;
+}
+
+.library-status p {
+  margin: var(--space-1) 0;
+}
+
+.library-status-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-2) 0;
+  padding: 0;
+  list-style: none;
+  color: var(--color-cyan);
+}
+
+.library-status-aborted {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.library-status .error,
+.library-status .muted {
+  overflow-wrap: anywhere;
+}

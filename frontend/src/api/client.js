@@ -46,6 +46,30 @@ async function request(path, options = {}) {
   return response.json();
 }
 
+// DRF refusals are `{detail}` or field errors like `{file: ["sentence"]}`. Return a readable sentence:
+// `detail`, else the first string in the first field's errors, else the raw text.
+function errorSentence(text) {
+  try {
+    const body = JSON.parse(text);
+    if (typeof body?.detail === "string") return body.detail;
+    const first = Object.values(body || {})[0];
+    const candidate = Array.isArray(first) ? first[0] : first;
+    if (typeof candidate === "string") return candidate;
+  } catch {
+    // not a JSON body; keep the raw text
+  }
+  return text;
+}
+
+async function requestWithMessage(path, options) {
+  try {
+    return await request(path, options);
+  } catch (err) {
+    if (err.isNetworkError) throw err;
+    throw new Error(errorSentence(String(err.message || err)));
+  }
+}
+
 export function filenameFromDisposition(header) {
   if (!header) return null;
   const encoded = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(header);
@@ -136,7 +160,18 @@ export const api = {
     return request("/roms/platforms/");
   },
   createRom(formData) {
-    return request("/roms/", { method: "POST", body: formData });
+    return requestWithMessage("/roms/", { method: "POST", body: formData });
+  },
+  // Admin-only: library status (incl. the last scan) and on-demand rescans.
+  libraryStatus() {
+    return request("/library/status/");
+  },
+  rescanLibrary({ acceptRemovals = false } = {}) {
+    return requestWithMessage("/library/scan/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accept_removals: acceptRemovals })
+    });
   },
   scrapeCover(romId) {
     return request(`/roms/${romId}/scrape_cover/`, { method: "POST" });

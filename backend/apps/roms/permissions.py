@@ -1,5 +1,7 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
+from apps.accounts.services import SUPER_ADMIN, user_role
+
 
 class IsSuperAdminOrReadOnlyRole(BasePermission):
     """
@@ -28,3 +30,10 @@ class IsPlaylistOwnerOrReadOnly(BasePermission):
 
     def has_object_permission(self, request, view, obj):
         return request.method in SAFE_METHODS or obj.created_by_id == request.user.id
+
+
+class IsSuperAdmin(BasePermission):
+    """Library administration: super admins only."""
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and user_role(request.user) == SUPER_ADMIN)

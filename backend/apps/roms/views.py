@@ -11,6 +11,7 @@ from rest_framework.response import Response
 
 from birdroms.tasks import scrape_rom_cover
 
+from .library import get_library
 from .models import ROM, Playlist
 from .pagination import ROMPagination
 from .permissions import IsPlaylistOwnerOrReadOnly, IsSuperAdminOrReadOnlyRole
@@ -40,7 +41,8 @@ def download_filename(rom):
 
 class ROMViewSet(viewsets.ModelViewSet):
     # `-id` breaks uploaded_at ties so pages never repeat or skip a ROM.
-    queryset = ROM.objects.select_related("uploaded_by").order_by("-uploaded_at", "-id")
+    # Games a scan found gone from the library (`missing`) are hidden everywhere.
+    queryset = ROM.objects.filter(missing=False).select_related("uploaded_by").order_by("-uploaded_at", "-id")
     serializer_class = ROMSerializer
     permission_classes = [IsSuperAdminOrReadOnlyRole]
     pagination_class = ROMPagination
@@ -75,7 +77,7 @@ class ROMViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"])
     def platforms(self, request):
         platforms = (
-            ROM.objects.exclude(platform="").order_by("platform").values_list("platform", flat=True).distinct()
+            ROM.objects.filter(missing=False).exclude(platform="").order_by("platform").values_list("platform", flat=True).distinct()
         )
         return Response(list(platforms))
 
@@ -97,6 +99,14 @@ class ROMViewSet(viewsets.ModelViewSet):
     def cover(self, request, pk=None):
         # Cover art lives next to the ROMs in private storage, so it is served the same way.
         rom = self.get_object()
+        if rom.cover_path:
+            try:
+                stream = get_library().storage.open(rom.cover_path, "rb")
+            except FileNotFoundError:
+                stream = None  # the library PNG is gone: fall back to the stored scraped cover
+            if stream is not None:
+                content_type = mimetypes.guess_type(rom.cover_path)[0] or "application/octet-stream"
+                return FileResponse(stream, content_type=content_type)
         if not rom.cover_art:
             raise Http404("This ROM has no cover art.")
         content_type = mimetypes.guess_type(rom.cover_art.name)[0] or "application/octet-stream"
@@ -130,7 +140,7 @@ class PlaylistViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         if self.action == "list":
-            return queryset.annotate(rom_count=Count("items"))
+            return queryset.annotate(rom_count=Count("items", filter=Q(items__rom__missing=False)))
         return queryset.prefetch_related("items__rom")
 
     def perform_create(self, serializer):

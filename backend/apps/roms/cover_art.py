@@ -7,6 +7,7 @@ the same permission-checked API as everything else.
 """
 
 import html
+import io
 import logging
 import os
 import re
@@ -501,6 +502,59 @@ def fetch_cover_for_rom(rom, config=None) -> bool:
     return scrape_rom(rom, config)[0]
 
 
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def _as_png(data: bytes) -> bytes:
+    """`data` as PNG bytes (converted with Pillow unless it already is one)."""
+    if data.startswith(PNG_SIGNATURE):
+        return data
+    from PIL import Image
+
+    image = Image.open(io.BytesIO(data))
+    if image.mode not in ("1", "L", "LA", "P", "RGB", "RGBA", "I;16"):
+        image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+    buffer = io.BytesIO()
+    image.save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+def _write_cover_to_library(rom, data: bytes) -> list[str]:
+    """Write the scraped cover as `<system>/Imgs/<stem>.png` in the library and link it.
+
+    Returns the ROM fields changed. Never raises: the media cover is already saved, so a
+    read-only or unreachable library, a write error or an undecodable image only logs.
+    Existing images are linked, never overwritten.
+    """
+    from .library import get_library
+
+    path = ""
+    try:
+        if not settings.LIBRARY.write_covers or not rom.file:
+            return []
+        library = get_library()
+        parts = rom.file.name.split("/")
+        prefix = library.systems_prefix
+        if len(parts) != (3 if prefix else 2) or (prefix and parts[0] != prefix):
+            return []
+        stem = os.path.splitext(parts[-1])[0]
+        system_dir = "/".join(parts[:-1])
+        folder, path = library.find_cover(system_dir, stem)
+        if not path:
+            if not library.writable:
+                return []
+            path = f"{system_dir}/{folder}/{stem}.png"
+            library.write_new(path, _as_png(data))
+        rom.cover_path = path
+        return ["cover_path"]
+    except FileExistsError:
+        rom.cover_path = path
+        return ["cover_path"]
+    except Exception as exc:
+        logger.warning("Could not write the cover for ROM %s into the library: %s", rom.pk, exc)
+        return []
+
+
 def scrape_rom(rom, config=None) -> tuple[bool, bool]:
     """Like `fetch_cover_for_rom`, but reports `(cover_saved, metadata_saved)`."""
     config = config or settings.COVER_ART
@@ -520,6 +574,8 @@ def scrape_rom(rom, config=None) -> tuple[bool, bool]:
         rom.cover_art.save(f"rom-{rom.pk}{extension}", ContentFile(data), save=False)
         rom.cover_art_source = result.source
         update_fields += ["cover_art", "cover_art_source"]
+    if found:
+        update_fields += _write_cover_to_library(rom, data)
     rom.save(update_fields=update_fields)
     if old and old != rom.cover_art.name:
         rom.cover_art.storage.delete(old)
