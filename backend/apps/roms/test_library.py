@@ -336,3 +336,13 @@ class EnvExampleTests(SimpleTestCase):
                 any(line.startswith(f"{name}=") for line in lines),
                 f"{name} missing from backend/.env.example",
             )
+
+
+class S3ExistsTests(SimpleTestCase):
+    def test_exists_errors_mean_unavailable(self):
+        class Broken:
+            def exists(self, name):
+                raise RuntimeError("AccessDenied")
+
+        with self.assertRaises(LibraryUnavailable):
+            S3Library(Broken(), "", False).exists("ROMS/SFC/A.sfc")

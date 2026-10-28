@@ -76,6 +76,9 @@ class RunLibraryScanTests(ScannerTestCase):
         release.assert_not_called()
 
     def assert_lock_free_from_another_session(self):
+        self.assertTrue(self.lock_is_free())
+
+    def lock_is_free(self):
         db = connection.settings_dict
         other = psycopg2.connect(
             dbname=db["NAME"], user=db["USER"], password=db["PASSWORD"], host=db["HOST"], port=db["PORT"] or None
@@ -87,7 +90,7 @@ class RunLibraryScanTests(ScannerTestCase):
                 cursor.execute("SELECT pg_advisory_unlock(%s)", [scanner.SCAN_LOCK_KEY])
         finally:
             other.close()
-        self.assertTrue(free)
+        return free
 
     def test_lock_is_released_after_a_scan(self):
         self.touch("ROMS/MD/Sonic.md")
@@ -113,6 +116,17 @@ class RunLibraryScanTests(ScannerTestCase):
             scan = run_library_scan(library=self.library)
         scan.refresh_from_db()
         self.assertEqual(scan.state, "ok")
+
+    def test_cover_scrapes_are_queued_after_the_lock_is_released(self):
+        self.touch("ROMS/MD/Sonic.md")
+        seen = []
+        with (
+            override_settings(LIBRARY=SMALL_GUARD),
+            mock.patch("birdroms.tasks.scrape_rom_cover", side_effect=lambda pk: seen.append(self.lock_is_free())),
+        ):
+            scan = run_library_scan(library=self.library)
+        self.assertEqual(scan.state, "ok")
+        self.assertEqual(seen, [True])
 
     def test_enqueues_covers_only_for_added_roms_without_cover_art(self):
         self.touch("ROMS/SFC/With Cover.smc")
