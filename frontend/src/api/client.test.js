@@ -231,6 +231,24 @@ describe("api client", () => {
     await expect(api.createRom(new FormData())).rejects.toThrow("This library is read-only.");
   });
 
+  it("turns DRF field errors on upload into the server's sentence", async () => {
+    const cases = [
+      [{ file: ["Super Mario World (U).smc is already in the library."] }, "Super Mario World (U).smc is already in the library."],
+      [{ file: "The ROM library is unavailable." }, "The ROM library is unavailable."],
+      [{ file: { nested: "x" } }, JSON.stringify({ file: { nested: "x" } })]
+    ];
+    for (const [body, expected] of cases) {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 400, text: () => Promise.resolve(JSON.stringify(body)) }));
+      await expect(api.createRom(new FormData())).rejects.toMatchObject({ message: expected });
+    }
+  });
+
+  it("keeps offline errors flagged when a refused-request helper is used", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    const err = await api.createRom(new FormData()).catch((e) => e);
+    expect(isNetworkError(err)).toBe(true);
+  });
+
   it("parses Content-Disposition filenames", () => {
     expect(filenameFromDisposition('attachment; filename="Zelda.nes"')).toBe("Zelda.nes");
     expect(filenameFromDisposition("attachment; filename*=UTF-8''Pok%C3%A9mon.gb")).toBe("Pokémon.gb");

@@ -1026,3 +1026,8 @@ button.danger {
   align-items: center;
   gap: var(--space-3);
 }
+
+.library-status .error,
+.library-status .muted {
+  overflow-wrap: anywhere;
+}
