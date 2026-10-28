@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" version="1.1" xmlns="http://www.w3.org/2000/svg">
+  <title>birdROMs icon</title>
+  <desc>birdROMs: the neon bird glyph on the app's dark background</desc>
+  <defs>
+    <linearGradient id="neon" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3ef0ff"/>
+      <stop offset="1" stop-color="#ff4fd8"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="#0b0a12"/>
+  <!-- The 80x80 handheld glyph, scaled to sit inside the maskable safe zone (central 80%). -->
+  <g transform="translate(76 76) scale(4.45)">
+    <polygon points="6,28 24,40 8,48" fill="url(#neon)"/>
+    <ellipse cx="36" cy="44" rx="23" ry="17" fill="url(#neon)"/>
+    <circle cx="58" cy="31" r="12" fill="url(#neon)"/>
+    <polygon points="68,28 79,33 68,37" fill="#b6ff3b"/>
+    <circle cx="61" cy="29" r="2.6" fill="#0b0a12"/>
+    <path d="M20 44 Q32 32 46 44 Q34 54 20 44 Z" fill="none" stroke="#0b0a12" stroke-width="2.5" stroke-linejoin="round"/>
+    <path d="M32 60 V71 M42 60 V71 M28 71 H36 M38 71 H46" fill="none" stroke="#b6ff3b" stroke-width="3" stroke-linecap="round"/>
+  </g>
+</svg>
