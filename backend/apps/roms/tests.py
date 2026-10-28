@@ -28,6 +28,7 @@ from birdroms.storage import FILESYSTEM_STORAGE, S3_STORAGE, build_storages
 from birdroms.tasks import scrape_rom_cover, sweep_missing_cover_art
 from birdroms.uploads import parse_max_upload_bytes
 
+from .library import library_storage
 from .cover_art import (
     LIBRETRO_MATCH_THRESHOLD,
     ScreenScraperGame,
@@ -139,7 +140,7 @@ class ROMPermissionTests(APITestCase):
         self.assertEqual(rom.uploaded_by, self.admin_user)
         self.assertEqual(response.data["extension"], ".nes")
         self.assertEqual(response.data["platform"], "NES")
-        self.assertTrue(Path(rom.file.path).resolve().is_relative_to(Path(settings.MEDIA_ROOT).resolve()))
+        self.assertTrue(Path(rom.file.path).resolve().is_relative_to(Path(library_storage().location).resolve()))
 
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
@@ -1058,8 +1059,8 @@ class FilesystemStorageRoundTripTests(APITestCase):
             file=SimpleUploadedFile("trip.nes", payload),
             uploaded_by=admin,
         )
-        self.assertTrue(default_storage.exists(rom.file.name))
-        self.assertTrue(Path(rom.file.path).is_relative_to(Path(settings.MEDIA_ROOT)))
+        self.assertTrue(library_storage().exists(rom.file.name))
+        self.assertTrue(Path(rom.file.path).is_relative_to(Path(library_storage().location)))
         rom = ROM.objects.get(pk=rom.pk)
         with rom.file.open("rb") as fh:
             self.assertEqual(fh.read(), payload)
@@ -1643,7 +1644,8 @@ class HostileInputTests(APITestCase):
                 )
                 self.assertEqual(response.status_code, status.HTTP_201_CREATED)
                 stored = ROM.objects.latest("id").file.name
-                self.assertTrue(stored.startswith("roms/"), stored)
+                self.assertFalse(stored.startswith("/"), stored)
+                self.assertTrue(Path(library_storage().path(stored)).resolve().is_relative_to(Path(library_storage().location).resolve()))
                 self.assertNotIn("..", stored)
                 self.assertNotIn("//", stored)
 
