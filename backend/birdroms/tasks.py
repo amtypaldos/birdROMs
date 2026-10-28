@@ -48,8 +48,8 @@ def scrape_rom_cover(rom_id: int) -> bool:
 
 
 def roms_missing_cover_art():
-    """ROMs that still have no cover art."""
-    return ROM.objects.filter(cover_art="")
+    """Present ROMs that have neither scraped cover art nor a cover in the library."""
+    return ROM.objects.filter(cover_art="", cover_path="", missing=False)
 
 
 @db_periodic_task(parse_sweep_crontab(os.environ))

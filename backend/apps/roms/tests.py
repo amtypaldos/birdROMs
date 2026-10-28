@@ -1,4 +1,5 @@
 import importlib
+import shutil
 from difflib import SequenceMatcher
 from html import escape
 from io import StringIO
@@ -68,6 +69,15 @@ def make_user(username, group_name=None):
     return user
 
 
+def empty_library_root():
+    """Clear the shared temp library and give it a `ROMS` folder: API uploads write real files
+    there and refuse names that are already taken, so tests that upload start from scratch."""
+    root = Path(settings.LIBRARY.root)
+    for child in root.iterdir():
+        shutil.rmtree(child) if child.is_dir() else child.unlink()
+    (root / "ROMS").mkdir()
+
+
 def dummy_rom(name="game.nes"):
     return SimpleUploadedFile(name, b"\x4e\x45\x53\x1a" + b"\x00" * 12, content_type="application/octet-stream")
 
@@ -82,6 +92,7 @@ class ROMPermissionTests(APITestCase):
     list_url = reverse("rom-list")
 
     def setUp(self):
+        empty_library_root()
         self.readonly_user = make_user("reader", "readonly")
         self.admin_user = make_user("admin", "super_admin")
 
@@ -612,6 +623,7 @@ class CoverArtScrapeTests(APITestCase):
     boxart = "Nintendo%20-%20Nintendo%20Entertainment%20System/Named_Boxarts/Metroid.png"
 
     def setUp(self):
+        empty_library_root()
         self.admin_user = make_user("admin", "super_admin")
         self.client.force_authenticate(self.admin_user)
 
@@ -818,6 +830,7 @@ class ScrapeCoverTaskTests(APITestCase):
     list_url = reverse("rom-list")
 
     def setUp(self):
+        empty_library_root()
         self.admin_user = make_user("admin", "super_admin")
 
     def make_rom(self):
@@ -1154,6 +1167,7 @@ class UploadValidationTests(APITestCase):
     list_url = reverse("rom-list")
 
     def setUp(self):
+        empty_library_root()
         self.client.force_authenticate(make_user("admin", "super_admin"))
 
     def upload(self, file, **extra):
@@ -1633,21 +1647,22 @@ class MediaAccessControlTests(APITestCase):
 
 class HostileInputTests(APITestCase):
     def setUp(self):
+        empty_library_root()
         self.admin = make_user("admin", "super_admin")
         self.client.force_authenticate(self.admin)
 
     def test_upload_filename_cannot_escape_the_roms_directory(self):
-        for name in ("../../evil.nes", "/etc/cron.d/evil.nes", "..\\..\\evil.nes"):
+        for name in ("../../evil1.nes", "/etc/cron.d/evil2.nes", "..\\..\\evil3.nes"):
             with self.subTest(name=name):
                 response = self.client.post(
                     reverse("rom-list"), {"title": "x", "file": dummy_rom(name)}, format="multipart"
                 )
                 self.assertEqual(response.status_code, status.HTTP_201_CREATED)
                 stored = ROM.objects.latest("id").file.name
-                self.assertFalse(stored.startswith("/"), stored)
-                self.assertTrue(Path(library_storage().path(stored)).resolve().is_relative_to(Path(library_storage().location).resolve()))
+                self.assertTrue(stored.startswith(("ROMS/FC/", "ROMS/_UNSORTED/")), stored)
                 self.assertNotIn("..", stored)
                 self.assertNotIn("//", stored)
+                self.assertTrue(Path(library_storage().path(stored)).resolve().is_relative_to(Path(library_storage().location).resolve()))
 
     def test_download_filename_drops_control_characters(self):
         rom = ROM.objects.create(title="Evil\r\nSet-Cookie: x=1", file=dummy_rom("a.nes"), uploaded_by=self.admin)
@@ -1831,6 +1846,7 @@ class FilenameAndTagsTests(APITestCase):
     NAME = "Bomberman 64 (U) [!].z64"
 
     def setUp(self):
+        empty_library_root()
         self.admin = make_user("admin", "super_admin")
         self.client.force_authenticate(self.admin)
 
