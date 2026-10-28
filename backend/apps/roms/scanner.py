@@ -5,10 +5,12 @@ files missing (never delete), restore returning ones. Locking and scan history l
 import posixpath
 from dataclasses import dataclass, field
 
-from django.db import transaction
+from django.conf import settings
+from django.db import connection, transaction
+from django.utils import timezone
 
-from .library import IMGS_FOLDER, Library, LibraryUnavailable
-from .models import ROM
+from .library import IMGS_FOLDER, Library, LibraryUnavailable, get_library
+from .models import ROM, LibraryScan
 from .platform_aliases import platform_for_folder, platform_for_game
 from .services import SUPPORTED_EXTENSIONS, get_extension, parse_rom_filename
 
@@ -25,6 +27,7 @@ MULTIFILE_EXTENSIONS = frozenset({".cue", ".gdi", ".m3u", ".ccd", ".mds"})
 MULTIFILE_PART_EXTENSIONS = frozenset({".bin", ".img", ".raw", ".sub"})
 COVER_EXTENSION = ".png"
 BATCH_SIZE = 500
+SCAN_LOCK_KEY = 0x62697264524F4D53  # "birdROMS": Postgres advisory lock key, one scan at a time
 
 
 @dataclass
@@ -162,3 +165,56 @@ def scan_library(library: Library, *, accept_removals: bool = False, guard_ratio
     result.added = len(to_create)
     result.missing = len(vanished)
     return result
+
+
+def _try_scan_lock():
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_try_advisory_lock(%s)", [SCAN_LOCK_KEY])
+        return cursor.fetchone()[0]
+
+
+def _release_scan_lock():
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_unlock(%s)", [SCAN_LOCK_KEY])
+
+
+def run_library_scan(*, accept_removals: bool = False, library: Library | None = None) -> LibraryScan | None:
+    """Run one locked scan and record it; None when another scan holds the lock.
+
+    The row ends `ok`, `aborted` (reason in `message`) or `failed` (exception text in `message`),
+    never `running`. After an `ok` scan, cover scrapes are queued for added ROMs without a cover.
+    """
+    if not _try_scan_lock():
+        return None
+    try:
+        scan = LibraryScan.objects.create(accept_removals=accept_removals)
+        try:
+            config = settings.LIBRARY
+            result = scan_library(
+                library or get_library(),
+                accept_removals=accept_removals,
+                guard_ratio=config.guard_ratio,
+                guard_min=config.guard_min,
+            )
+        except Exception as exc:
+            scan.state, scan.message = "failed", f"{type(exc).__name__}: {exc}"
+        else:
+            for name in ("added", "changed", "missing", "restored", "skipped_multifile", "skipped_other"):
+                setattr(scan, name, getattr(result, name))
+            scan.unknown_folders = result.unknown_folders
+            scan.state = "aborted" if result.aborted_reason else "ok"
+            scan.message = result.aborted_reason
+        scan.finished_at = timezone.now()
+        scan.save()
+        if scan.state == "ok":
+            _enqueue_cover_scrapes(result.added_ids)
+        return scan
+    finally:
+        _release_scan_lock()
+
+
+def _enqueue_cover_scrapes(rom_ids):
+    from birdroms import tasks  # deferred: tasks imports this module
+
+    for rom_id in ROM.objects.filter(pk__in=rom_ids, cover_path="").values_list("pk", flat=True):
+        tasks.scrape_rom_cover(rom_id)

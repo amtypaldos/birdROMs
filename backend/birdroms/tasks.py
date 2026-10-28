@@ -16,14 +16,17 @@ from huey.contrib.djhuey import db_periodic_task, db_task, periodic_task, task
 from apps.accounts.services import expire_stale_pairings
 from apps.roms.cover_art import safe_fetch_cover_for_rom
 from apps.roms.models import ROM
+from apps.roms.scanner import run_library_scan
 
-from .huey_config import parse_sweep_crontab
+from .huey_config import parse_scan_crontab, parse_sweep_crontab
 
 __all__ = [
     "db_periodic_task",
     "db_task",
     "huey",
     "periodic_task",
+    "scan_library_periodic",
+    "scan_library_task",
     "scrape_rom_cover",
     "sweep_expired_pairings",
     "sweep_missing_cover_art",
@@ -67,3 +70,15 @@ def sweep_missing_cover_art() -> int:
 def sweep_expired_pairings() -> None:
     """Revoke device tokens from pairings approved but never collected (see `expire_stale_pairings`)."""
     expire_stale_pairings()
+
+
+@db_task()
+def scan_library_task(accept_removals: bool = False) -> None:
+    """Scan the ROM library now (on demand); a no-op while another scan is running."""
+    run_library_scan(accept_removals=accept_removals)
+
+
+@db_periodic_task(parse_scan_crontab(os.environ))
+def scan_library_periodic() -> None:
+    """Scan the ROM library on the `LIBRARY_SCAN_CRONTAB` schedule (default every 15 minutes)."""
+    run_library_scan()

@@ -6,6 +6,7 @@ from .auth_config import _parse_bool
 QUEUE_NAME = "birdroms"
 DEFAULT_REDIS_URL = "redis://localhost:6379/0"
 DEFAULT_SWEEP_CRONTAB = "0 * * * *"
+DEFAULT_SCAN_CRONTAB = "*/15 * * * *"
 
 
 def build_huey(env, debug: bool) -> Huey:
@@ -33,6 +34,21 @@ def parse_sweep_crontab(env):
     if len(fields) != 5:
         raise ImproperlyConfigured(
             f"COVER_ART_SWEEP_CRONTAB must have five cron fields (minute hour day month weekday), got {raw!r}."
+        )
+    minute, hour, day, month, day_of_week = fields
+    return crontab(minute=minute, hour=hour, day=day, month=month, day_of_week=day_of_week)
+
+
+def parse_scan_crontab(env):
+    """Schedule for the periodic library scan, from `LIBRARY_SCAN_CRONTAB`; default every 15 minutes.
+
+    Same five-field format and fail-fast behaviour as `parse_sweep_crontab`.
+    """
+    raw = env.get("LIBRARY_SCAN_CRONTAB", "").strip() or DEFAULT_SCAN_CRONTAB
+    fields = raw.split()
+    if len(fields) != 5:
+        raise ImproperlyConfigured(
+            f"LIBRARY_SCAN_CRONTAB must have five cron fields (minute hour day month weekday), got {raw!r}."
         )
     minute, hour, day, month, day_of_week = fields
     return crontab(minute=minute, hour=hour, day=day, month=month, day_of_week=day_of_week)
