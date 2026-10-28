@@ -498,6 +498,16 @@ class CaseOnlyRenameTests(ScannerTestCase):
         library = ListingOmits(str(self.root), {"ROMS/SFC/Game.smc"})
         self.assertEqual(scan_library(library, **GUARD).missing, 0)
 
+    def test_unreadable_folder_in_recheck_aborts(self):
+        self.touch("ROMS/SFC/Game.smc")
+        self.touch("ROMS/SFC/Other.smc")
+        self.scan()
+        library = ListingOmits(str(self.root), {"ROMS/SFC/Game.smc"})
+        with mock.patch("apps.roms.library.os.listdir", side_effect=PermissionError("denied")):
+            result = scan_library(library, **GUARD)
+        self.assertIn("denied", result.aborted_reason)
+        self.assertEqual(ROM.objects.filter(missing=True).count(), 0)
+
 
 class VanishedAndUnsortedTests(ScannerTestCase):
     def test_unsorted_files_import_with_extension_platform(self):
