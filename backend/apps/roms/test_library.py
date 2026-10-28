@@ -309,3 +309,30 @@ class S3LibraryTests(SimpleTestCase):
         self.assertFalse(ro.writable)
         with self.assertRaises(PermissionError):
             ro.write_new("ROMS/SFC/C.sfc", b"z")
+
+
+class EnvExampleTests(SimpleTestCase):
+    ENV_NAMES = {
+        "backend": "LIBRARY_BACKEND",
+        "root": "LIBRARY_ROOT",
+        "s3_prefix": "LIBRARY_S3_PREFIX",
+        "read_only": "LIBRARY_READ_ONLY",
+        "write_covers": "LIBRARY_WRITE_COVERS",
+        "scan_crontab": "LIBRARY_SCAN_CRONTAB",
+        "guard_ratio": "LIBRARY_MISSING_GUARD_RATIO",
+        "guard_min": "LIBRARY_MISSING_GUARD_MIN",
+    }
+
+    def test_env_example_documents_library_settings(self):
+        from dataclasses import fields
+
+        self.assertEqual(
+            set(self.ENV_NAMES), {f.name for f in fields(LibrarySettings)}
+        )
+        text = (Path(__file__).resolve().parents[2] / ".env.example").read_text()
+        lines = [line.lstrip("# ").strip() for line in text.splitlines()]
+        for name in self.ENV_NAMES.values():
+            self.assertTrue(
+                any(line.startswith(f"{name}=") for line in lines),
+                f"{name} missing from backend/.env.example",
+            )
