@@ -41,6 +41,7 @@ from .cover_art import (
     normalize_title,
     parse_cover_art_settings,
     parse_screenscraper_metadata,
+    scrape_rom,
 )
 from .models import ROM, Playlist, PlaylistItem
 from .services import (
@@ -776,6 +777,27 @@ class CoverArtScrapeTests(APITestCase):
         self.assertIn(self.client.get(url).status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
 
 
+class ScrapeRomFilenameTests(APITestCase):
+    def make_rom(self, **kwargs):
+        user = make_user("uploader", "super_admin")
+        return ROM.objects.create(
+            title="Bomberman 64", platform="N64", file=dummy_rom("bomberman.z64"), uploaded_by=user, **kwargs
+        )
+
+    def scraped_filename(self, rom):
+        with mock.patch("apps.roms.cover_art.scrape_cover_art", return_value=None) as scrape:
+            scrape_rom(rom, BOTH_PROVIDERS)
+        return scrape.call_args.args[2]
+
+    def test_passes_original_filename_when_set(self):
+        rom = self.make_rom(filename="Bomberman 64 (U) [!].z64")
+        self.assertEqual(self.scraped_filename(rom), "Bomberman 64 (U) [!].z64")
+
+    def test_falls_back_to_storage_name_when_blank(self):
+        rom = self.make_rom()
+        self.assertEqual(self.scraped_filename(rom), rom.file.name)
+
+
 class ScrapeCoverTaskTests(APITestCase):
     list_url = reverse("rom-list")
 
@@ -1067,6 +1089,24 @@ class ROMDownloadTests(APITestCase):
         self.client.force_authenticate(self.admin_user)
         response = self.client.get(self.url)
         self.assertIn('filename=".._etc_passwd.nes"', response["Content-Disposition"])
+
+    def test_download_uses_original_filename(self):
+        self.rom.title = "Bomberman 64"
+        self.rom.filename = "Bomberman 64 (U) [!].z64"
+        self.rom.save()
+        self.client.force_authenticate(self.admin_user)
+        response = self.client.get(self.url)
+        self.assertIn('filename="Bomberman 64 (U) [!].z64"', response["Content-Disposition"])
+
+    def test_download_original_filename_is_sanitized(self):
+        self.rom.filename = "Evil\r\nGame/x\\y.nes"
+        self.rom.save()
+        self.client.force_authenticate(self.admin_user)
+        response = self.client.get(self.url)
+        self.assertIn('filename="EvilGame_x_y.nes"', response["Content-Disposition"])
+        for value in response.headers.values():
+            self.assertNotIn("\n", value)
+            self.assertNotIn("\r", value)
 
     def test_unknown_id_returns_404(self):
         self.client.force_authenticate(self.admin_user)

@@ -499,7 +499,7 @@ def fetch_cover_for_rom(rom, config=None) -> bool:
 def scrape_rom(rom, config=None) -> tuple[bool, bool]:
     """Like `fetch_cover_for_rom`, but reports `(cover_saved, metadata_saved)`."""
     config = config or settings.COVER_ART
-    filename = rom.file.name if rom.file else ""
+    filename = rom.filename or (rom.file.name if rom.file else "")
     game = ScreenScraperGame(rom.title, rom.platform, filename, config) if SCREENSCRAPER in config.providers else None
     found = scrape_cover_art(rom.title, rom.platform, filename, config, screenscraper=game)
     metadata = game.metadata() if game else {}
