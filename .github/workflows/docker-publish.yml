@@ -57,6 +57,37 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The backend image carries the handheld release of the same version. A tag
+      # v2026.10.29.2 downloads that exact handheld release (waiting if it is still
+      # building). A branch build downloads the latest handheld release. The media
+      # directory is a volume, so the entrypoint copies the file into place on start.
+      - name: Fetch the matching handheld package
+        if: matrix.image == 'birdroms-backend'
+        env:
+          # This repo's token cannot read another private repo. Set HANDHELD_RELEASE_TOKEN
+          # (contents: read on the handheld repo) until that repo is public.
+          GH_TOKEN: ${{ secrets.HANDHELD_RELEASE_TOKEN || github.token }}
+          HANDHELD_REPO: ${{ github.repository_owner }}/birdroms-handheld
+        run: |
+          set -euo pipefail
+          download() {
+            gh release download "$1" --repo "$HANDHELD_REPO" --pattern 'birdROMs.muxapp' --dir backend --clobber
+          }
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME}"
+            for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              if download "$tag"; then
+                exit 0
+              fi
+              echo "waiting for $HANDHELD_REPO release $tag"
+              sleep 20
+            done
+            echo "::error::no birdROMs.muxapp on $HANDHELD_REPO release $tag"
+            exit 1
+          fi
+          tag="$(gh release view --repo "$HANDHELD_REPO" --json tagName --jq .tagName)"
+          download "$tag"
+
       - name: Work out the image tags
         id: tags
         env:

@@ -11,6 +11,16 @@ in (your public https address, not `localhost`).
 
 ## Publish a new version
 
+A server release tag (`v2026.10.29.2`) downloads `birdROMs.muxapp` from the handheld release of the
+**same tag** while the image builds. On startup the container copies that file into the media volume
+when it differs from what is already published. Tag the handheld repo first, wait for its release,
+then tag the server with the same name.
+
+Until the handheld repo is public, add a secret `HANDHELD_RELEASE_TOKEN` on this repo that can read
+it. After it is public, the workflow token is enough.
+
+To publish a package by hand instead:
+
 1. Get the package: download `birdROMs.muxapp` from the [birdroms-handheld releases](https://github.com/amtypaldos/birdroms-handheld/releases), or build it in that repo with `just package` (writes `dist/birdROMs.muxapp`).
 2. Put it on the server:
 
@@ -24,8 +34,8 @@ in (your public https address, not `localhost`).
    `docker compose exec -u "${PUID:-568}:${PGID:-568}" backend python manage.py publish_handheld /tmp/birdROMs.muxapp`;
    `exec` runs as root unless you pass `-u`, and the file must belong to the app user).
    Adjust the service name to your compose file.
-3. That is all. The page shows the new size and date; friends re-download and reinstall (the
-   friend-facing steps are in the handheld repo's `docs/install.md`). Their pairing is kept.
+3. That is all. The page shows the new size and date. Paired handhelds download it the next time
+   they open the app. New friends install from the Handheld page (see the handheld repo's `docs/install.md`).
 
 Where the file lives: `HANDHELD_APP_PATH` (default `MEDIA_ROOT/handheld/birdROMs.muxapp`, so it sits
 on the same volume as uploads). Until something is published the page says so.
