@@ -3,6 +3,7 @@
 The owner publishes a build with `manage.py publish_handheld <file>`; it lands at
 `settings.HANDHELD_APP_PATH` (default `MEDIA_ROOT/handheld/birdROMs.muxapp`)."""
 
+import hashlib
 import json
 import tempfile
 import zipfile
@@ -44,8 +45,18 @@ def handheld_info():
         "available": True,
         "filename": path.name,
         "size": stat.st_size,
+        "sha256": _sha256(path),
         "published_at": datetime.fromtimestamp(stat.st_mtime, tz=dt_timezone.utc).isoformat(),
     }
+
+
+def _sha256(path: Path) -> str:
+    """Hash of the stored package, before a download adds server.json."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 SEED_ENTRY = "birdROMs/server.json"

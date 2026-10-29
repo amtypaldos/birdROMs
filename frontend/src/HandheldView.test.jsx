@@ -73,6 +73,13 @@ describe("HandheldView", () => {
     expect(screen.getByText(/type the code shown on the handheld/i)).toBeInTheDocument();
   });
 
+  it("says the handheld updates itself instead of asking for a re-copy", async () => {
+    await renderView();
+
+    expect(screen.getByText(/handheld updates itself from this site/i)).toBeInTheDocument();
+    expect(screen.queryByText(/copy it into/i)).not.toBeInTheDocument();
+  });
+
   it("approves a typed code, trimmed, and shows success", async () => {
     await renderView();
 

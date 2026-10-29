@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import shutil
@@ -78,7 +79,7 @@ class HandheldInfoApiTests(TempHandheldCase, APITestCase):
         self.assertTrue(data["available"])
         self.assertEqual(data["filename"], "birdROMs.muxapp")
         self.assertEqual(data["size"], self.target.stat().st_size)
-        self.assertNotIn("sha256", data)
+        self.assertEqual(data["sha256"], hashlib.sha256(self.target.read_bytes()).hexdigest())
         self.assertIn("published_at", data)
         self.assertNotIn(str(self.tmp), str(data))
 
