@@ -41,7 +41,7 @@ jobs:
       POSTGRES_HOST: localhost
       POSTGRES_PORT: "5432"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
@@ -62,7 +62,7 @@ jobs:
     env:
       COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           # Node 24 matches the project's dev toolchain (mise) and avoids a
@@ -93,7 +93,7 @@ jobs:
     env:
       PLATFORM: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
