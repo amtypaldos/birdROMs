@@ -20,6 +20,10 @@ if [ "$(id -u)" = "0" ]; then
     exec setpriv --reuid="$PUID" --regid="$PGID" --clear-groups "$0" "$@"
 fi
 
+# The image may contain the handheld release that matches this server version.
+# The media directory is a volume, so copy it into place when it is new.
+python manage.py install_bundled_handheld
+
 if [ "$1" = "gunicorn" ]; then
     python manage.py migrate --noinput
     python manage.py collectstatic --noinput

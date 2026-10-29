@@ -5,6 +5,8 @@ The owner publishes a build with `manage.py publish_handheld <file>`; it lands a
 
 import hashlib
 import json
+import os
+import shutil
 import tempfile
 import zipfile
 from datetime import datetime
@@ -48,6 +50,39 @@ def handheld_info():
         "sha256": _sha256(path),
         "published_at": datetime.fromtimestamp(stat.st_mtime, tz=dt_timezone.utc).isoformat(),
     }
+
+
+# The image build downloads the matching handheld release here. The media directory is a
+# volume, so the entrypoint copies this file into HANDHELD_APP_PATH on startup.
+BUNDLED_HANDHELD = Path("/app/birdROMs.muxapp")
+
+
+def publish_package(source: Path) -> Path:
+    """Validate `source` and install it at HANDHELD_APP_PATH. Returns the installed path."""
+    if not source.is_file():
+        raise InvalidMuxapp(f"{source} does not exist.")
+    validate_muxapp(source)
+    target = handheld_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    partial = target.with_name(target.name + ".partial")
+    shutil.copyfile(source, partial)
+    os.replace(partial, target)
+    return target
+
+
+def install_bundled(source: Path | None = None) -> bool:
+    """Install the package shipped in the image when it differs from the published one.
+
+    Returns True when the published file was replaced. A missing or empty bundle does nothing.
+    """
+    source = source or Path(os.environ.get("BUNDLED_HANDHELD_PATH", BUNDLED_HANDHELD))
+    if not source.is_file() or source.stat().st_size == 0:
+        return False
+    target = handheld_path()
+    if target.is_file() and _sha256(source) == _sha256(target):
+        return False
+    publish_package(source)
+    return True
 
 
 def _sha256(path: Path) -> str:

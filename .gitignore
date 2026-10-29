@@ -9,6 +9,8 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+# Downloaded by Docker Publish; not part of the source tree.
+backend/birdROMs.muxapp
 venv/
 .pytest_cache/
 .mypy_cache/

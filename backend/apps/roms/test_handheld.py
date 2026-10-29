@@ -12,7 +12,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.roms.handheld import InvalidMuxapp, handheld_info, personalized_package, validate_muxapp
+from apps.roms.handheld import InvalidMuxapp, handheld_info, install_bundled, personalized_package, validate_muxapp
 from apps.roms.tests import make_user
 
 
@@ -139,3 +139,24 @@ class PublishHandheldCommandTests(TempHandheldCase, SimpleTestCase):
     def test_refuses_a_missing_file(self):
         with self.assertRaises(CommandError):
             call_command("publish_handheld", str(self.tmp / "nope.muxapp"), stdout=io.StringIO())
+
+
+class InstallBundledTests(TempHandheldCase, SimpleTestCase):
+    def test_missing_or_empty_bundle_does_nothing(self):
+        self.assertFalse(install_bundled(self.tmp / "missing.muxapp"))
+        empty = self.tmp / "empty.muxapp"
+        empty.write_bytes(b"")
+        self.assertFalse(install_bundled(empty))
+        self.assertFalse(self.target.exists())
+
+    def test_installs_then_skips_the_same_bytes(self):
+        source = build_muxapp(self.tmp / "birdROMs.muxapp")
+        self.assertTrue(install_bundled(source))
+        self.assertEqual(self.target.read_bytes(), source.read_bytes())
+        self.assertFalse(install_bundled(source))
+
+    def test_replaces_a_different_package(self):
+        install_bundled(build_muxapp(self.tmp / "a.muxapp"))
+        newer = build_muxapp(self.tmp / "b.muxapp", names=("birdROMs/birdroms", "birdROMs/mux_launch.sh", "birdROMs/extra"))
+        self.assertTrue(install_bundled(newer))
+        self.assertEqual(self.target.read_bytes(), newer.read_bytes())
