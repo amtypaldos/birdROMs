@@ -19,8 +19,9 @@ and the Docker images and compose files.
 
 Known, documented limitations are listed in
 [docs/superpowers/reports/2026-10-26-security-audit.md](docs/superpowers/reports/2026-10-26-security-audit.md)
-(for example: API tokens do not expire, and the default `AUTH_METHODS=local` allows self-registration of a
-read-only account, so do not expose such an instance to the internet unless that is what you want).
+(for example: API tokens do not expire). Self-registration is closed by default; if you open it with
+`ALLOW_REGISTRATION` or the Django admin setting, anyone who can reach the site can create a read-only
+account, so do not do that on an internet-facing instance unless that is what you want).
 Hardening advice is in [SELF_HOSTING.md](SELF_HOSTING.md).
 
 ## Supported versions

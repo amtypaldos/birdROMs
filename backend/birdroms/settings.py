@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 from apps.roms.cover_art import parse_cover_art_settings
 
-from .auth_config import parse_allow_local_login, parse_auth_methods, parse_oidc_settings
+from .auth_config import parse_allow_local_login, parse_allow_registration, parse_auth_methods, parse_oidc_settings
 from .deploy_config import check_secret_key, parse_csv, parse_debug, parse_num_proxies, parse_proxy_settings
 from .huey_config import build_huey
 from .library_config import parse_library_settings
@@ -131,6 +131,9 @@ HUEY = build_huey(os.environ, DEBUG)
 AUTH_METHODS = parse_auth_methods(os.environ)
 # Local username/password login is always on when this is true (defaults to DEBUG).
 ALLOW_LOCAL_LOGIN = parse_allow_local_login(os.environ, DEBUG)
+# Self-registration (needs local login too). True/False forces it; None (unset) defers to the
+# RegistrationSettings checkbox in Django admin. Closed by default.
+ALLOW_REGISTRATION = parse_allow_registration(os.environ)
 # Single OIDC/SSO provider (Pocket ID, Authentik, Keycloak, Authelia, Google, ...).
 OIDC = parse_oidc_settings(os.environ, AUTH_METHODS)
 
@@ -148,6 +151,7 @@ if TESTING:
     PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
     AUTH_METHODS = parse_auth_methods({})
     ALLOW_LOCAL_LOGIN = False
+    ALLOW_REGISTRATION = None
     OIDC = parse_oidc_settings({}, AUTH_METHODS)
     # No live provider calls from tests; scraping tests opt in with mocked HTTP.
     COVER_ART = parse_cover_art_settings({"COVER_ART_PROVIDERS": ""})

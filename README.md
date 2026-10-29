@@ -158,9 +158,15 @@ asks the public `GET /api/auth/config/` endpoint which methods are on and shows 
 | SSO only | `AUTH_METHODS=oidc`, `ALLOW_LOCAL_LOGIN=False` |
 | Both | `AUTH_METHODS=local,oidc` |
 
-- **local**: `POST /api/auth/login/` and `POST /api/auth/register/` (self-registered users are
-  `readonly`). `ALLOW_LOCAL_LOGIN` force-enables them and defaults to `DJANGO_DEBUG`, so local
-  dev always works. When local login is off, both endpoints return 404.
+- **local**: `POST /api/auth/login/` and `POST /api/auth/register/`. `ALLOW_LOCAL_LOGIN`
+  force-enables local login and defaults to `DJANGO_DEBUG`, so local dev always works. When
+  local login is off, both endpoints return 404.
+- **Self-registration is closed by default.** It is open only when local login is on and either
+  `ALLOW_REGISTRATION=true` is set, or `ALLOW_REGISTRATION` is unset and **Allow registration**
+  is ticked in Django admin (*Accounts > Registration settings*). A non-empty
+  `ALLOW_REGISTRATION` (`true` or `false`) always overrides the admin checkbox. Self-registered
+  users are `readonly`. While registration is closed, `POST /api/auth/register/` returns 404 and
+  `GET /api/auth/config/` reports `"registration": false`, so the UI hides "Create account".
 - **oidc**: standard Authorization Code flow with PKCE against a single OpenID Connect
   provider. It uses [Authlib](https://docs.authlib.org/), a maintained library that handles
   discovery, state/nonce, and ID token signature checks. The browser goes to

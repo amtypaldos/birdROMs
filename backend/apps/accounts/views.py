@@ -20,6 +20,7 @@ from .services import (
     local_login_enabled,
     oidc_enabled,
     provision_oidc_user,
+    registration_enabled,
     set_role,
 )
 
@@ -43,7 +44,7 @@ class AuthConfigView(APIView):
 
     def get(self, request):
         methods = enabled_methods()
-        data = {"methods": methods}
+        data = {"methods": methods, "registration": registration_enabled()}
         if "oidc" in methods:
             data["oidc"] = {"provider_name": settings.OIDC["PROVIDER_NAME"], "login_url": reverse("oidc-login")}
         return Response(data)
@@ -52,6 +53,12 @@ class AuthConfigView(APIView):
 class RegisterView(LocalLoginRequiredMixin, APIView):
     permission_classes = [permissions.AllowAny]
     throttle_classes = [RegisterThrottle]
+
+    def initial(self, request, *args, **kwargs):
+        # 404 (not 403) so a closed server doesn't advertise the endpoint; checked before throttling.
+        if not registration_enabled():
+            raise Http404("Registration is closed.")
+        super().initial(request, *args, **kwargs)
 
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)

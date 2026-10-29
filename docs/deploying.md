@@ -184,9 +184,13 @@ many new PNGs in the library's `Imgs/` folders. Set `LIBRARY_WRITE_COVERS=False`
 
 ## 6. Sign-in
 
-- `AUTH_METHODS=local` (the default) also enables **self-registration**: anyone who can reach the
-  site can create a read-only account and download every ROM. Do not use it on a site reachable
-  from the internet unless that is what you want.
+- `AUTH_METHODS=local` (the default) enables username/password login. **Self-registration is
+  closed by default**: create accounts in `/admin/`, or open sign-up deliberately. Set
+  `ALLOW_REGISTRATION=true` (or `false`) in the env file to force it either way; that wins over
+  the admin. When `ALLOW_REGISTRATION` is unset, tick **Allow registration** under
+  *Accounts > Registration settings* in `/admin/` (no redeploy needed). Once open, anyone who can
+  reach the site can create a read-only account and download every ROM, so do not open it on a
+  site reachable from the internet unless that is what you want.
 - `AUTH_METHODS=oidc` with `ALLOW_LOCAL_LOGIN=False` hands account control to your identity
   provider (Pocket ID, Authentik, Keycloak, Authelia, Google...). Restrict the client to the
   group of people who should have access at the provider. Members of `OIDC_ADMIN_GROUP` become

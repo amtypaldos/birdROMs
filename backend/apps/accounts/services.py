@@ -7,7 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.authtoken.models import Token
 
-from .models import DeviceToken, OIDCIdentity, PairingRequest
+from .models import DeviceToken, OIDCIdentity, PairingRequest, RegistrationSettings
 
 SUPER_ADMIN = "super_admin"
 READONLY = "readonly"
@@ -21,6 +21,19 @@ _oidc_clients = {}
 
 def local_login_enabled() -> bool:
     return "local" in settings.AUTH_METHODS or settings.ALLOW_LOCAL_LOGIN
+
+
+def registration_enabled() -> bool:
+    """Self-registration is open only with local login on and the setting open.
+
+    A set `ALLOW_REGISTRATION` env var (True/False) wins; when unset (None) the Django-admin
+    `RegistrationSettings` checkbox decides, and it defaults to closed.
+    """
+    if not local_login_enabled():
+        return False
+    if settings.ALLOW_REGISTRATION is not None:
+        return settings.ALLOW_REGISTRATION
+    return RegistrationSettings.load().allow_registration
 
 
 def oidc_enabled() -> bool:

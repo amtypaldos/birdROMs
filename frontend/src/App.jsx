@@ -6,7 +6,7 @@ import LibraryStatusPanel from "./LibraryStatusPanel";
 import HandheldView from "./HandheldView";
 import PlaylistsView from "./PlaylistsView";
 
-function LocalAuthForm({ onAuthed }) {
+function LocalAuthForm({ onAuthed, registration }) {
   const [mode, setMode] = useState("login");
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
@@ -58,9 +58,11 @@ function LocalAuthForm({ onAuthed }) {
       {error ? <p className="error" role="alert">{error}</p> : null}
       <div className="row">
         <button type="submit" className="primary">{registering ? "Register" : "Login"}</button>
-        <button type="button" className="ghost" onClick={() => setMode(registering ? "login" : "register")}>
-          {registering ? "Back to login" : "Create account"}
-        </button>
+        {registration ? (
+          <button type="button" className="ghost" onClick={() => setMode(registering ? "login" : "register")}>
+            {registering ? "Back to login" : "Create account"}
+          </button>
+        ) : null}
       </div>
     </form>
   );
@@ -88,7 +90,7 @@ function AuthPanel({ config, onAuthed }) {
           </a>
         ) : null}
         {local && oidc ? <p className="divider">or</p> : null}
-        {local ? <LocalAuthForm onAuthed={onAuthed} /> : null}
+        {local ? <LocalAuthForm onAuthed={onAuthed} registration={config.registration === true} /> : null}
         {!local && !oidc ? <p className="error">No login methods are enabled on this server.</p> : null}
       </div>
     </section>
