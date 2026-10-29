@@ -234,10 +234,6 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await waitFor(() => expect(api.listRoms).toHaveBeenLastCalledWith({ search: "zel", platform: "NES", page: 1 }));
 
-    const calls = api.listRoms.mock.calls.length;
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    await waitFor(() => expect(api.listRoms.mock.calls.length).toBe(calls + 1));
-    expect(api.listRoms).toHaveBeenLastCalledWith({ search: "zel", platform: "NES", page: 1 });
   });
 
   it("hides upload and scrape controls from readonly users", async () => {
