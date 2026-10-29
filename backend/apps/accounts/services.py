@@ -9,8 +9,9 @@ from django.utils import timezone
 from .models import DeviceToken, OIDCIdentity, PairingRequest, RegistrationSettings
 
 SUPER_ADMIN = "super_admin"
+UPLOADER = "uploader"
 READONLY = "readonly"
-ROLE_GROUPS = (SUPER_ADMIN, READONLY)
+ROLE_GROUPS = (SUPER_ADMIN, UPLOADER, READONLY)
 
 # Expired pairing rows are kept this long so a late poll still reads "gone" rather than "unknown".
 PAIRING_RETENTION = timedelta(hours=1)
@@ -49,11 +50,16 @@ def enabled_methods() -> list:
 
 
 def user_role(user):
-    """The user's birdROMs role: `super_admin`, `readonly`, or None if they have neither."""
-    if user.is_superuser or user.groups.filter(name=SUPER_ADMIN).exists():
+    """The user's birdROMs role: `super_admin`, `uploader`, `readonly`, or None if they have none.
+
+    A user in several role groups gets the most powerful one, in that order.
+    """
+    if user.is_superuser:
         return SUPER_ADMIN
-    if user.groups.filter(name=READONLY).exists():
-        return READONLY
+    names = set(user.groups.filter(name__in=ROLE_GROUPS).values_list("name", flat=True))
+    for role in ROLE_GROUPS:
+        if role in names:
+            return role
     return None
 
 
@@ -110,10 +116,13 @@ def oidc_login_allowed(claims) -> bool:
 def role_from_claims(claims):
     config = settings.OIDC
     admin_group = config["ADMIN_GROUP"]
-    groups = claims.get(config["GROUPS_CLAIM"]) or []
-    if isinstance(groups, str):
-        groups = [groups]
-    return SUPER_ADMIN if admin_group and admin_group in groups else READONLY
+    upload_group = config.get("UPLOAD_GROUP", "")
+    groups = _claim_list(claims.get(config["GROUPS_CLAIM"]))
+    if admin_group and admin_group in groups:
+        return SUPER_ADMIN
+    if upload_group and upload_group in groups:
+        return UPLOADER
+    return READONLY
 
 
 def _unique_username(claims):

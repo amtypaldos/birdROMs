@@ -81,16 +81,19 @@ linux/arm64. Every push to `main` publishes `latest` and `sha-<7 chars>`. A rele
 
 ## Roles and sign-in
 
-Two roles, stored as Django groups:
+Three roles, stored as Django groups:
 
 - `super_admin`: everything, plus editing and deleting ROM entries, re-scraping covers and running the
-  Library page (status, rescans, accepting removals). Deleting an entry removes it from birdROMs only,
-  never the file.
-- `readonly`: browse, download, use playlists and pair a handheld.
+  Library page (status, rescans, accepting removals) and invites. Deleting an entry removes it from
+  birdROMs only, never the file.
+- `uploader`: browse, download, use playlists, pair a handheld, and upload ROMs. Cannot edit, delete or
+  re-scrape ROMs, use the Library page, or make invites.
+- `readonly`: browse, download, use playlists and pair a handheld. Cannot upload.
 
-Uploading and creating playlists are open to every signed-in user, and only a playlist's creator can
-change it. Roles beyond these two are not built. Assign roles to local users in Django admin; SSO users get
-theirs from the provider.
+A user with no role group can do nothing. If a user is in more than one role group, the most powerful
+one wins (`super_admin`, then `uploader`, then `readonly`). Any signed-in user can create playlists, and
+only a playlist's creator can change it. Assign roles to local users in Django admin (add them to the
+group); SSO users get theirs from the provider.
 
 ![A playlist: ROMs in order, with reorder and remove buttons](docs/images/playlists.png)
 
@@ -116,14 +119,15 @@ shows only what is on.
   anyone who can reach the site can download every ROM.
 - **Invites** are the other way to add a local account, and they work while self-registration is closed.
   A `super_admin` makes a one-time link from **Invite a friend** on the Library page, with
-  `python manage.py create_invite [--role readonly|super_admin] [--days N] [--label NAME] [--base-url URL]`,
+  `python manage.py create_invite [--role readonly|uploader|super_admin] [--days N] [--label NAME] [--base-url URL]`,
   or with `POST /api/auth/invites/`. The link (`/invite/<token>`) works once, expires after
   `INVITE_TTL_DAYS` (default 7), and can be revoked (`DELETE /api/auth/invites/<id>/`, or in Django admin).
   Only a SHA-256 digest of the token is stored, so the link is shown once at creation and cannot be
   recovered. The friend picks a username and password and is signed in. The default role is `readonly`.
 - **SSO** is one OpenID Connect provider (Pocket ID, Authentik, Keycloak, Authelia, Google) using the
   Authorization Code flow with PKCE. Members of `OIDC_ADMIN_GROUP` (from the `OIDC_GROUPS_CLAIM` claim)
-  become `super_admin`; everyone else is `readonly`. The role is re-synced on every SSO login. Users
+  become `super_admin`. Otherwise members of the optional `OIDC_UPLOAD_GROUP` become `uploader` (leave it
+  empty and SSO never assigns uploader); everyone else is `readonly`. The role is re-synced on every SSO login. Users
   are matched on the provider's `sub`, never on username; `OIDC_LINK_BY_EMAIL=True` opts in to linking
   existing local accounts by verified email. SAML is not supported. To limit who can sign in at all, set
   `OIDC_ALLOWED_GROUPS` (members of any listed group, from `OIDC_GROUPS_CLAIM`) and/or

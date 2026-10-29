@@ -26,6 +26,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from storages.backends.s3 import S3Storage
 
+from apps.accounts.models import DeviceToken
 from birdroms.storage import FILESYSTEM_STORAGE, S3_STORAGE, build_storages
 from birdroms.tasks import scrape_rom_cover, sweep_missing_cover_art
 from birdroms.uploads import parse_max_upload_bytes
@@ -129,23 +130,93 @@ class ROMPermissionTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual([rom["title"] for rom in response.data["results"]], ["Existing"])
 
-    def test_any_authed_user_can_upload(self):
-        # Open uploads are deliberate for now (RBAC deferred): a roleless user can upload.
-        nobody = make_user("nobody")
-        self.client.force_authenticate(nobody)
+    def upload(self, name="Mine"):
+        return self.client.post(self.list_url, {"title": name, "file": dummy_rom()}, format="multipart")
 
-        response = self.client.post(self.list_url, {"title": "Mine", "file": dummy_rom()}, format="multipart")
+    def test_roleless_user_cannot_upload(self):
+        self.client.force_authenticate(make_user("nobody"))
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(ROM.objects.get(pk=response.data["id"]).uploaded_by, nobody)
+        response = self.upload()
 
-    def test_readonly_can_now_create(self):
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(ROM.objects.count(), 0)
+
+    def test_readonly_cannot_upload(self):
         self.client.force_authenticate(self.readonly_user)
 
-        response = self.client.post(self.list_url, {"title": "Mine", "file": dummy_rom()}, format="multipart")
+        response = self.upload()
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(ROM.objects.count(), 0)
+
+    def test_uploader_can_upload(self):
+        uploader = make_user("up", "uploader")
+        self.client.force_authenticate(uploader)
+
+        response = self.upload()
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(ROM.objects.get(pk=response.data["id"]).uploaded_by, self.readonly_user)
+        self.assertEqual(ROM.objects.get(pk=response.data["id"]).uploaded_by, uploader)
+
+    def test_django_superuser_can_upload(self):
+        self.client.force_authenticate(User.objects.create_superuser("root", password="test-pass-123"))
+        self.assertEqual(self.upload().status_code, status.HTTP_201_CREATED)
+
+    def test_super_admin_can_upload_and_delete(self):
+        self.client.force_authenticate(self.admin_user)
+        response = self.upload()
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        delete = self.client.delete(reverse("rom-detail", args=[response.data["id"]]))
+        self.assertEqual(delete.status_code, status.HTTP_204_NO_CONTENT)
+
+    def assert_reads_but_cannot_write(self, user):
+        rom = ROM.objects.create(title="Existing", file=dummy_rom("existing.gba"), uploaded_by=self.admin_user)
+        self.client.force_authenticate(user)
+        detail = reverse("rom-detail", args=[rom.pk])
+
+        self.assertEqual(self.client.get(self.list_url, {"search": "Exist"}).status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.get(detail).status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.get(reverse("rom-download", args=[rom.pk])).status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.patch(detail, {"title": "X"}, format="json").status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            self.client.put(detail, {"title": "X"}, format="json").status_code, status.HTTP_403_FORBIDDEN
+        )
+        self.assertEqual(self.client.delete(detail).status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            self.client.post(reverse("rom-scrape-cover", args=[rom.pk])).status_code, status.HTTP_403_FORBIDDEN
+        )
+        rom.refresh_from_db()
+        self.assertEqual(rom.title, "Existing")
+        self.assertTrue(ROM.objects.filter(pk=rom.pk).exists())
+
+    def test_readonly_reads_but_cannot_edit_delete_or_scrape(self):
+        self.assert_reads_but_cannot_write(self.readonly_user)
+
+    def test_uploader_reads_but_cannot_edit_delete_or_scrape(self):
+        self.assert_reads_but_cannot_write(make_user("up", "uploader"))
+
+    def test_uploader_cannot_use_library_admin_or_invites(self):
+        self.client.force_authenticate(make_user("up", "uploader"))
+        self.assertEqual(self.client.get(reverse("library-status")).status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.post(reverse("library-scan")).status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.get(reverse("invites")).status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.post(reverse("invites"), {}, format="json").status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_uploader_can_create_a_playlist(self):
+        self.client.force_authenticate(make_user("up", "uploader"))
+        response = self.client.post(reverse("playlist-list"), {"name": "Mine"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_device_token_stays_read_only_for_an_uploader(self):
+        uploader = make_user("up", "uploader")
+        _, raw = DeviceToken.mint(uploader)
+
+        response = self.client.post(
+            self.list_url, {"title": "Mine", "file": dummy_rom()}, format="multipart", HTTP_AUTHORIZATION=f"Device {raw}"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(ROM.objects.count(), 0)
 
     def test_super_admin_can_create_with_auto_classification(self):
         self.client.force_authenticate(self.admin_user)
