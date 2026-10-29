@@ -129,7 +129,7 @@ GitHub Actions ([`ci.yml`](.github/workflows/ci.yml)) runs on every push and pul
   checks the `PUID`/`PGID` behaviour of the backend image and validates the compose files.
 
 [`docker-publish.yml`](.github/workflows/docker-publish.yml) publishes the images to GHCR on pushes to
-`main` (`latest`, `sha-<7>`) and on `vX.Y.Z` tags (`X.Y.Z`, `latest`), and creates a GitHub Release for tags.
+`main` (`latest`, `sha-<7>`) and on date tags `vYYYY.MM.DD` (`YYYY.MM.DD`, `latest`; `vYYYY.MM.DD.N` for another release the same day), and creates a GitHub Release for tags.
 
 ## Auth and Roles
 

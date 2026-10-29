@@ -4,7 +4,7 @@
 #   ghcr.io/<owner>/birdroms-web       (frontend/Dockerfile, target prod)
 #
 # Tags: every push to main -> `latest` and `sha-<7 chars>` (immutable, use it to pin or roll
-# back); a version tag vX.Y.Z -> `X.Y.Z` and `latest`. Deploy by pointing a compose file at
+# back); a date tag vYYYY.MM.DD[.N] -> `YYYY.MM.DD[.N]` and `latest`. Deploy by pointing a compose file at
 # these images (see docs/deploying.md). Images are multi-arch: linux/amd64 and linux/arm64
 # (Raspberry Pi, ARM NAS and ARM cloud hosts); the arm64 half is built under QEMU.
 #
@@ -62,6 +62,9 @@ jobs:
         env:
           IMAGE: ${{ matrix.image }}
         run: |
+          if [[ "${{ github.ref_type }}" == "tag" && ! "${GITHUB_REF_NAME}" =~ ^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}(\.[0-9]+)?$ ]]; then
+            echo "::error::Release tags are dates: vYYYY.MM.DD, or vYYYY.MM.DD.N for another release the same day (got ${GITHUB_REF_NAME})"; exit 1
+          fi
           owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
           repo="ghcr.io/${owner}/${IMAGE}"
           if [ "${{ github.ref_type }}" = "tag" ]; then
