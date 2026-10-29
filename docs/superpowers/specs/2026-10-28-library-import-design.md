@@ -6,7 +6,7 @@ Date: 2026-10-28. Status: approved by the user, 2026-10-28. Repo: `birdROMs` (se
 
 The user already has a large, curated ROM library, laid out exactly like a muOS SD card (`ROMS/<SYSTEM>/<game file>`, with `Imgs/<game>.png` box art in most system folders). Today birdROMs only knows ROMs that were uploaded one by one through the web UI, so that library is invisible to it. The user wants birdROMs to **use the library where it already lives**: scan it in place, show every game, scrape what's missing, and keep up with changes, so friends can browse and download the whole collection (web and handheld) without anyone re-uploading 20,000 files.
 
-In production the library lives on a NAS, the NFS share `192.168.2.2:/mnt/volume1/retro-games/roms`, mounted into the birdROMs container on the `docker-apps` host. Deployment (docker-compose on `docker-apps`, behind the reverse proxy on `docker-critical`, which also has a script for adding a site and its DNS) comes after this feature is solid. It is **not** part of this project.
+In production the library lives on a NAS, as an NFS share mounted into the birdROMs container. Deployment (docker-compose on a Docker host behind a reverse proxy) comes after this feature is solid. It is **not** part of this project.
 
 The test library is the user's SD card (`/Volumes/ROMS-RG35/ROMS`, exFAT): about 44 GB, roughly 20,000 files in total, 55 system folders of which about 40 are non-empty. Of those files, **5,535 are game files directly in a system folder** (outside `APPS`/`PORTS`); the rest are box art, ports and app data. 37 folders have an `Imgs/` folder with one PNG per game, and **only 12 games have no `Imgs` PNG**. Most games are a single file (`.chd`, `.PBP`, `.iso`, `.zip`, `.sfc`, `.gba`, …). Arcade folders (`MAME`, `FBNEO`, `NEOGEO`, `CPS1/2/3`, …) use short zip names (`mslug.zip`). `APPS` and `PORTS` hold apps and PC ports, not ROMs. `DREAMCAST` has one game as a folder (`Sonic Adventure/`).
 
@@ -23,7 +23,7 @@ The test library is the user's SD card (`/Volumes/ROMS-RG35/ROMS`, exFAT): about
 
 ## Non-goals
 
-- Deployment / compose changes for `docker-apps` (later, once this is solid).
+- Deployment / compose changes for the production host (later, once this is solid).
 - Games made of several files inside their own folder (Dreamcast `Sonic Adventure/`, multi-track `.gdi`/`.cue` sets in folders, `PORTS/*`). v1 treats each file in a system folder as one game; subfolders other than `Imgs` are skipped (and counted in the scan report).
 - Real arcade titles for short zip names (`mslug.zip` → "Metal Slug"). v1 uses the file name as the title (as the parser does today); a name lookup from a MAME/FBNeo DAT is a follow-up.
 - Save files and save states (Syncthing handles those).
@@ -83,4 +83,4 @@ The exact model fields and migrations (e.g. `path`, `size_bytes`, `mtime`, `miss
 - **Handheld writes box art into muOS** when it downloads a game: save the game's cover (library `Imgs` or scraped) into muOS's per-system box-art folder under `MUOS/info/catalogue/`, so muOS's own game list shows art. Confirm the exact path and naming on the device. Part of the "super easy handheld install" project.
 - **Super easy handheld install** and docs (next project).
 - **README and docs cleanup** after both.
-- Arcade title lookup from a DAT; multi-file / folder games; docker-compose deployment on `docker-apps`.
+- Arcade title lookup from a DAT; multi-file / folder games; docker-compose deployment on the production host.

@@ -266,7 +266,7 @@
 **Interfaces:**
 - Produces:
   - Dev compose: the backend and worker mount `${LIBRARY_PATH:-./library}:/library` with `LIBRARY_ROOT: /library`.
-  - Prod compose: both share a named volume `birdroms_library` mounted at `/library`. There's a commented NFS example for `192.168.2.2:/mnt/volume1/retro-games/roms` (`driver_opts: type: nfs, o: addr=192.168.2.2,rw,nfsvers=4, device: ":/mnt/volume1/retro-games/roms"`).
+  - Prod compose: both share a named volume `birdroms_library` mounted at `/library`. There's a commented NFS example for `192.0.2.10:/srv/roms` (`driver_opts: type: nfs, o: addr=192.0.2.10,rw,nfsvers=4, device: ":/srv/roms"`).
   - `.env.example` documents every `LIBRARY_*` variable with its default and a one-line meaning.
 
 - [ ] **Step 1: Write failing test:** `test_env_example_documents_library_settings`. Every field of `LibrarySettings` has a matching `LIBRARY_*` line in the repo's `.env.example`.

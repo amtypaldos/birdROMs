@@ -11,7 +11,7 @@ in (your public https address, not `localhost`).
 
 ## Publish a new version
 
-1. Build the package in the handheld repo: `just package` (writes `dist/birdROMs.muxapp`).
+1. Get the package: download `birdROMs.muxapp` from the [birdroms-handheld releases](https://github.com/amtypaldos/birdroms-handheld/releases), or build it in that repo with `just package` (writes `dist/birdROMs.muxapp`).
 2. Put it on the server:
 
    ```
