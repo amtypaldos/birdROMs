@@ -52,3 +52,12 @@ CLEANUP.md
 
 # Local ROM library mounted by docker-compose.yml (LIBRARY_PATH default)
 /library/
+
+# Agent / tooling scratch
+.superpowers/
+.worktrees/
+
+# Local databases and dumps
+*.sqlite3
+*.dump
+backend/media/
