@@ -101,20 +101,43 @@ shows only what is on.
 | Both | `AUTH_METHODS=local,oidc` |
 
 - **Local.** `ALLOW_LOCAL_LOGIN` force-enables local login and defaults to `DJANGO_DEBUG`. With local
-  login off, the login and register endpoints return 404.
+  login off, the login, register and invite endpoints return 404.
 - **Self-registration is closed by default**, even with local login on. `ALLOW_REGISTRATION=true` or
   `false` overrides Django admin. If it is unset, the **Allow registration** checkbox under *Accounts >
   Registration settings* in Django admin decides, and the default row is closed. Registration also
   needs local login. Self-registered users are `readonly`. The login page shows **Create account** only
   when registration is actually open; `GET /api/auth/config/` reports this as `registration`. Once open,
   anyone who can reach the site can download every ROM.
+- **Invites** are the other way to add a local account, and they work while self-registration is closed.
+  A `super_admin` makes a one-time link from **Invite a friend** on the Library page, with
+  `python manage.py create_invite [--role readonly|super_admin] [--days N] [--label NAME] [--base-url URL]`,
+  or with `POST /api/auth/invites/`. The link (`/invite/<token>`) works once, expires after
+  `INVITE_TTL_DAYS` (default 7), and can be revoked (`DELETE /api/auth/invites/<id>/`, or in Django admin).
+  Only a SHA-256 digest of the token is stored, so the link is shown once at creation and cannot be
+  recovered. The friend picks a username and password and is signed in. The default role is `readonly`.
 - **SSO** is one OpenID Connect provider (Pocket ID, Authentik, Keycloak, Authelia, Google) using the
   Authorization Code flow with PKCE. Members of `OIDC_ADMIN_GROUP` (from the `OIDC_GROUPS_CLAIM` claim)
   become `super_admin`; everyone else is `readonly`. The role is re-synced on every SSO login. Users
   are matched on the provider's `sub`, never on username; `OIDC_LINK_BY_EMAIL=True` opts in to linking
-  existing local accounts by verified email. SAML is not supported.
+  existing local accounts by verified email. SAML is not supported. To limit who can sign in at all, set
+  `OIDC_ALLOWED_GROUPS` (members of any listed group, from `OIDC_GROUPS_CLAIM`) and/or
+  `OIDC_ALLOWED_EMAIL_DOMAINS` (the email's domain, accepted only when the provider marks the email
+  verified). With either set, a user who matches neither is refused and no account is created; with
+  both empty, everyone your provider accepts gets in.
 
-Both methods issue the same API token. The callback URL is `https://<host>/api/auth/oidc/callback/`; the
+**Sessions.** Both methods sign the browser in with an **HttpOnly session cookie** (`SameSite=Lax`,
+`Secure` behind an HTTPS proxy). The web UI keeps no token in `localStorage` and never sees the
+cookie. The session lasts `SESSION_COOKIE_AGE` seconds (default 14 days) and renews on activity;
+changing a password ends that user's sessions. Unsafe requests (login, logout, uploads, ...) are
+CSRF-protected: `GET /api/auth/csrf/` sets the script-readable `csrftoken` cookie, and the SPA echoes it
+in `X-CSRFToken`. Anything scripting the API with a session must do the same. Logging in is rate-limited
+per username and per client address, as is the Django admin login.
+
+**Handheld device tokens are unchanged:** a paired handheld sends `Authorization: Device <token>`, can only
+read (any write is a 403), and is revocable in Django admin. A device that goes unused for
+`DEVICE_TOKEN_IDLE_DAYS` (default 365, `0` = never) stops working and must be paired again.
+
+The SSO callback URL is `https://<host>/api/auth/oidc/callback/`; the
 Pocket ID walk-through and env block are in [SELF_HOSTING.md](SELF_HOSTING.md#6-single-sign-on-oidc--pocket-id-example).
 Other providers use the same variables with different values:
 

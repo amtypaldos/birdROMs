@@ -1,12 +1,31 @@
 from django.urls import path
 
 from .pairing import PairApproveView, PairPollView, PairStartView
-from .views import AuthConfigView, LoginView, MeView, RegisterView, oidc_callback, oidc_login
+from .views import (
+    AuthConfigView,
+    InviteAcceptView,
+    InviteCheckView,
+    InviteListCreateView,
+    InviteRevokeView,
+    LoginView,
+    LogoutView,
+    MeView,
+    RegisterView,
+    csrf,
+    oidc_callback,
+    oidc_login,
+)
 
 urlpatterns = [
     path("config/", AuthConfigView.as_view(), name="auth-config"),
     path("register/", RegisterView.as_view(), name="register"),
+    path("csrf/", csrf, name="auth-csrf"),
     path("login/", LoginView.as_view(), name="login"),
+    path("logout/", LogoutView.as_view(), name="logout"),
+    path("invites/", InviteListCreateView.as_view(), name="invites"),
+    path("invites/check/", InviteCheckView.as_view(), name="invite-check"),
+    path("invites/accept/", InviteAcceptView.as_view(), name="invite-accept"),
+    path("invites/<int:pk>/", InviteRevokeView.as_view(), name="invite-revoke"),
     path("me/", MeView.as_view(), name="me"),
     path("oidc/login/", oidc_login, name="oidc-login"),
     path("oidc/callback/", oidc_callback, name="oidc-callback"),

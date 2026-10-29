@@ -9,7 +9,16 @@ from dotenv import load_dotenv
 
 from apps.roms.cover_art import parse_cover_art_settings
 
-from .auth_config import parse_allow_local_login, parse_allow_registration, parse_auth_methods, parse_oidc_settings
+from .auth_config import (
+    parse_allow_local_login,
+    parse_allow_registration,
+    parse_auth_methods,
+    parse_cache_settings,
+    parse_device_token_idle_days,
+    parse_invite_ttl_days,
+    parse_oidc_settings,
+    parse_session_age,
+)
 from .deploy_config import check_secret_key, parse_csv, parse_debug, parse_num_proxies, parse_proxy_settings
 from .huey_config import build_huey
 from .library_config import parse_library_settings
@@ -32,6 +41,19 @@ CSRF_TRUSTED_ORIGINS = _proxy["CSRF_TRUSTED_ORIGINS"]
 SECURE_PROXY_SSL_HEADER = _proxy["SECURE_PROXY_SSL_HEADER"]
 SESSION_COOKIE_SECURE = _proxy["SESSION_COOKIE_SECURE"]
 CSRF_COOKIE_SECURE = _proxy["CSRF_COOKIE_SECURE"]
+if DEBUG:
+    # The Vite dev server (port 5173) proxies /api to Django, so its Origin differs from the backend Host.
+    CSRF_TRUSTED_ORIGINS = [*CSRF_TRUSTED_ORIGINS, "http://localhost:5173", "http://127.0.0.1:5173"]
+
+# Browser sessions: an HttpOnly cookie that expires after SESSION_COOKIE_AGE seconds without activity (it is
+# renewed on every request). The CSRF cookie is readable by the SPA, which echoes it in `X-CSRFToken`.
+SESSION_COOKIE_AGE = parse_session_age(os.environ)
+SESSION_SAVE_EVERY_REQUEST = True
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+# Shared by every worker when REDIS_URL is set, so throttle counters are not per-process.
+CACHES = parse_cache_settings(os.environ)
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -41,7 +63,6 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
-    "rest_framework.authtoken",
     "huey.contrib.djhuey",
     "apps.accounts",
     "apps.roms",
@@ -55,6 +76,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "apps.accounts.throttles.AdminLoginThrottleMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -134,6 +156,10 @@ ALLOW_LOCAL_LOGIN = parse_allow_local_login(os.environ, DEBUG)
 # Self-registration (needs local login too). True/False forces it; None (unset) defers to the
 # RegistrationSettings checkbox in Django admin. Closed by default.
 ALLOW_REGISTRATION = parse_allow_registration(os.environ)
+# Default lifetime of an invite link, in days (`INVITE_TTL_DAYS`).
+INVITE_TTL_DAYS = parse_invite_ttl_days(os.environ)
+# A paired handheld unused for this many days stops working (`DEVICE_TOKEN_IDLE_DAYS`; 0 = never).
+DEVICE_TOKEN_IDLE_DAYS = parse_device_token_idle_days(os.environ)
 # Single OIDC/SSO provider (Pocket ID, Authentik, Keycloak, Authelia, Google, ...).
 OIDC = parse_oidc_settings(os.environ, AUTH_METHODS)
 
@@ -155,6 +181,7 @@ if TESTING:
     OIDC = parse_oidc_settings({}, AUTH_METHODS)
     # No live provider calls from tests; scraping tests opt in with mocked HTTP.
     COVER_ART = parse_cover_art_settings({"COVER_ART_PROVIDERS": ""})
+    CACHES = parse_cache_settings({})
     # Tasks run inline; tests never need Redis or a worker.
     HUEY = build_huey({"HUEY_IMMEDIATE": "true"}, DEBUG)
 
@@ -163,24 +190,32 @@ if not TESTING:
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-LOGIN_THROTTLE_RATES = {"login": "10/min", "register": "10/hour", "pair_start": "10/min", "pair_code": "120/min"}
+LOGIN_THROTTLE_RATES = {
+    "login": "10/min",  # per submitted username
+    "login_ip": "60/min",  # per client address: slows password spraying across usernames
+    "admin_login": "10/min",  # per submitted username on /admin/login/
+    "register": "10/hour",  # per client address
+    "invite": "20/hour",  # per client address: invite lookups and sign-ups
+    "pair_start": "10/min",
+    "pair_code": "120/min",
+}
 if TESTING:
     # Effectively unlimited so unrelated tests never trip a throttle; throttle tests patch the rates.
     LOGIN_THROTTLE_RATES = {key: "100000/min" for key in LOGIN_THROTTLE_RATES}
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.TokenAuthentication",
+        # Handhelds send `Authorization: Device <token>` (read-only); browsers use the session cookie.
+        # Device comes first so an unauthenticated request gets a 401 challenge rather than a 403.
         "apps.accounts.authentication.DeviceTokenAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
-    # Scopes used by the throttles in apps/accounts/throttles.py (login is keyed per username,
-    # register per client address).
+    # Scopes used by the throttles in apps/accounts/throttles.py.
     "DEFAULT_THROTTLE_RATES": LOGIN_THROTTLE_RATES,
     # Reverse proxies in front of Django, so `X-Forwarded-For` can't be spoofed to dodge the
-    # register throttle; see parse_num_proxies and .env.example.
+    # login/register/invite throttles; see parse_num_proxies and .env.example.
     "NUM_PROXIES": parse_num_proxies(os.environ),
 }

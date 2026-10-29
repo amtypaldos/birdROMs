@@ -1,3 +1,6 @@
+from datetime import timedelta
+
+from django.conf import settings
 from django.utils import timezone
 from rest_framework import authentication, exceptions
 from rest_framework.permissions import SAFE_METHODS
@@ -32,6 +35,11 @@ class DeviceTokenAuthentication(authentication.BaseAuthentication):
         if device_token is None or device_token.revoked or not device_token.user.is_active:
             raise exceptions.AuthenticationFailed("Invalid or revoked device token.")
 
+        if _idle_expired(device_token):
+            # Leave last_used_at alone, so a later change of the idle window can be judged
+            # from the real last use rather than from this rejection.
+            raise exceptions.AuthenticationFailed("Device token has expired.")
+
         if request.method not in SAFE_METHODS:
             raise exceptions.PermissionDenied("Device tokens are read-only.")
 
@@ -40,3 +48,12 @@ class DeviceTokenAuthentication(authentication.BaseAuthentication):
 
     def authenticate_header(self, request):
         return "Device"
+
+
+def _idle_expired(device_token):
+    """A paired device unused for DEVICE_TOKEN_IDLE_DAYS stops working. Zero means never."""
+    days = settings.DEVICE_TOKEN_IDLE_DAYS
+    if not days:
+        return False
+    last = device_token.last_used_at or device_token.created_at
+    return timezone.now() - last >= timedelta(days=days)

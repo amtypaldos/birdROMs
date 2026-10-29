@@ -1,3 +1,4 @@
+from django.http import HttpResponse
 from rest_framework.throttling import SimpleRateThrottle
 
 
@@ -19,6 +20,48 @@ class LoginThrottle(SimpleRateThrottle):
         return self.cache_format % {"scope": self.scope, "ident": username}
 
 
+class LoginIPThrottle(SimpleRateThrottle):
+    """Limit login attempts per client address, to slow password spraying across many usernames.
+
+    Behind a reverse proxy this is only as accurate as DRF's `NUM_PROXIES` setting.
+    """
+
+    scope = "login_ip"
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
+
+
+class AdminLoginThrottle(SimpleRateThrottle):
+    """Limit submissions to the Django admin login form per submitted username.
+
+    Used by `AdminLoginThrottleMiddleware`, because the admin's own login view is not a DRF view.
+    """
+
+    scope = "admin_login"
+
+    def get_cache_key(self, request, view):
+        username = str(request.POST.get("username") or "").strip().lower()
+        if not username:
+            return None
+        return self.cache_format % {"scope": self.scope, "ident": username}
+
+
+class AdminLoginThrottleMiddleware:
+    """Throttle POST /admin/login/ per username. The admin login view is Django's, not DRF's."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        path = request.path.rstrip("/") or "/"
+        if request.method == "POST" and path == "/admin/login":
+            throttle = AdminLoginThrottle()
+            if not throttle.allow_request(request, None):
+                return HttpResponse("Too many login attempts. Try again shortly.", status=429)
+        return self.get_response(request)
+
+
 class RegisterThrottle(SimpleRateThrottle):
     """Limit account creation per client address.
 
@@ -26,6 +69,15 @@ class RegisterThrottle(SimpleRateThrottle):
     """
 
     scope = "register"
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
+
+
+class InviteThrottle(SimpleRateThrottle):
+    """Limit invite lookups and sign-ups per client address."""
+
+    scope = "invite"
 
     def get_cache_key(self, request, view):
         return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}

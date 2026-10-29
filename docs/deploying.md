@@ -191,10 +191,23 @@ many new PNGs in the library's `Imgs/` folders. Set `LIBRARY_WRITE_COVERS=False`
   *Accounts > Registration settings* in `/admin/` (no redeploy needed). Once open, anyone who can
   reach the site can create a read-only account and download every ROM, so do not open it on a
   site reachable from the internet unless that is what you want.
+- **Invites** add a local account while self-registration stays closed. Run
+  `docker compose -f docker-compose.prod.yml exec backend python manage.py create_invite --base-url https://<host>`
+  (or use **Invite a friend** on the Library page as an admin) and send the one-time link. It expires after
+  `INVITE_TTL_DAYS` (default 7); revoke an unused one in `/admin/` under *Accounts > Invites*.
+- **Sessions.** The web UI signs in with an HttpOnly session cookie (`SESSION_COOKIE_AGE` seconds, default
+  14 days, renewed on activity) and CSRF tokens, for local and SSO logins alike. No token is stored in the
+  browser. Behind HTTPS set `DJANGO_BEHIND_HTTPS_PROXY=True` and `DJANGO_CSRF_TRUSTED_ORIGINS` as in section 4.
+  Handheld device tokens (`Authorization: Device ...`) are unchanged and read-only; one unused for
+  `DEVICE_TOKEN_IDLE_DAYS` (default 365, `0` = never) stops working.
+  Upgrading from a build that signed in with a token: the migration deletes the old web API tokens, so
+  everyone signs in once more.
 - `AUTH_METHODS=oidc` with `ALLOW_LOCAL_LOGIN=False` hands account control to your identity
   provider (Pocket ID, Authentik, Keycloak, Authelia, Google...). Restrict the client to the
   group of people who should have access at the provider. Members of `OIDC_ADMIN_GROUP` become
-  `super_admin`; everyone else is read-only. Keep one Django superuser (created above) for
+  `super_admin`; everyone else is read-only. To limit who can sign in at all, set `OIDC_ALLOWED_GROUPS`
+  and/or `OIDC_ALLOWED_EMAIL_DOMAINS` (comma-separated; the email domain counts only when the provider
+  marks the email verified; both empty means everyone the provider accepts). Keep one Django superuser (created above) for
   `/admin/`. Callback URL: `https://<host>/api/auth/oidc/callback/`.
 
 ## 7. Smoke test

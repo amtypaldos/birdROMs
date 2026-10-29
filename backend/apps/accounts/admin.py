@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import DeviceToken, OIDCIdentity, RegistrationSettings
+from .models import DeviceToken, Invite, OIDCIdentity, RegistrationSettings
 
 
 @admin.register(OIDCIdentity)
@@ -33,4 +33,25 @@ class RegistrationSettingsAdmin(admin.ModelAdmin):
         return not RegistrationSettings.objects.exists()
 
     def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(Invite)
+class InviteAdmin(admin.ModelAdmin):
+    """Invites are made with `manage.py create_invite` or the web UI (the raw token only exists then).
+
+    The admin lists them and can revoke a pending one by setting `revoked_at`; it can't add one, because a
+    hand-made row would have no token anyone knows.
+    """
+
+    list_display = ("label", "role", "status_display", "created_by", "created_at", "expires_at", "used_by")
+    list_filter = ("role",)
+    search_fields = ("label", "created_by__username", "used_by__username")
+    readonly_fields = ("token_hash", "created_by", "created_at", "expires_at", "used_at", "used_by")
+
+    @admin.display(description="status")
+    def status_display(self, invite):
+        return invite.status()
+
+    def has_add_permission(self, request):
         return False

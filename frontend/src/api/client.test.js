@@ -1,36 +1,35 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isNetworkError } from "../offline";
-import { api, consumeOidcFragment, filenameFromDisposition, getToken, setToken } from "./client";
+import { OIDC_ERROR_MESSAGES, api, consumeOidcFragment, filenameFromDisposition } from "./client";
 
-function mockLocalStorage() {
-  const store = new Map();
-  return {
-    getItem: vi.fn((key) => (store.has(key) ? store.get(key) : null)),
-    setItem: vi.fn((key, value) => store.set(key, String(value))),
-    removeItem: vi.fn((key) => store.delete(key))
-  };
+function setCsrfCookie(value) {
+  document.cookie = value ? `csrftoken=${value}; path=/` : "csrftoken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+}
+
+function okJson(body = {}, status = 200) {
+  return { ok: true, status, json: () => Promise.resolve(body) };
 }
 
 describe("api client", () => {
-  let storage;
-
   beforeEach(() => {
-    storage = mockLocalStorage();
-    vi.stubGlobal("localStorage", storage);
+    setCsrfCookie("cookietoken");
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    setCsrfCookie(null);
   });
 
-  it("round-trips the token through localStorage", () => {
-    expect(getToken()).toBeNull();
-    setToken("abc123");
-    expect(storage.setItem).toHaveBeenCalledWith("birdroms_token", "abc123");
-    expect(getToken()).toBe("abc123");
-    setToken(null);
-    expect(storage.removeItem).toHaveBeenCalledWith("birdroms_token");
-    expect(getToken()).toBeNull();
+  it("never stores or reads a token in localStorage", async () => {
+    const storage = { getItem: vi.fn(), setItem: vi.fn(), removeItem: vi.fn() };
+    vi.stubGlobal("localStorage", storage);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okJson({ user: { id: 1 } })));
+
+    await api.login({ username: "alice", password: "pw" });
+    await api.me();
+
+    expect(storage.getItem).not.toHaveBeenCalled();
+    expect(storage.setItem).not.toHaveBeenCalled();
   });
 
   it("flags a failed fetch (no response at all) as a network error", async () => {
@@ -50,35 +49,155 @@ describe("api client", () => {
     expect(isNetworkError(err)).toBe(false);
   });
 
-  it("attaches the Authorization header when a token is set", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve([])
-    });
+  it("sends the session cookie with every request and no Authorization header", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson([]));
     vi.stubGlobal("fetch", fetchMock);
-    setToken("abc123");
 
     await api.listRoms();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, options] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/roms/");
-    expect(options.headers.Authorization).toBe("Token abc123");
+    expect(options.credentials).toBe("include");
+    expect(options.headers.Authorization).toBeUndefined();
+    expect(options.headers["X-CSRFToken"]).toBeUndefined(); // safe methods need no CSRF token
   });
 
-  it("omits the Authorization header when no token is set", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve([])
+  it("echoes the CSRF cookie in X-CSRFToken on unsafe requests", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson({}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.createPlaylist({ name: "x" });
+    await api.deletePlaylist(3);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2); // the cookie is already there, so no extra /auth/csrf/ trip
+    for (const [, options] of fetchMock.mock.calls) {
+      expect(options.headers["X-CSRFToken"]).toBe("cookietoken");
+      expect(options.credentials).toBe("include");
+    }
+  });
+
+  it("fetches the CSRF cookie first when it is missing, then sends the token", async () => {
+    setCsrfCookie(null);
+    const fetchMock = vi.fn().mockImplementation((url) => {
+      if (url === "/api/auth/csrf/") {
+        setCsrfCookie("fresh"); // what the Set-Cookie of the real response does
+        return Promise.resolve(okJson({ csrfToken: "fresh" }));
+      }
+      return Promise.resolve(okJson({}));
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await api.listRoms();
+    await api.createPlaylist({ name: "x" });
 
-    const [, options] = fetchMock.mock.calls[0];
-    expect(options.headers.Authorization).toBeUndefined();
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/auth/csrf/");
+    expect(fetchMock.mock.calls[0][1].credentials).toBe("include");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/playlists/");
+    expect(fetchMock.mock.calls[1][1].headers["X-CSRFToken"]).toBe("fresh");
+  });
+
+  it("falls back to the token in the csrf response when the cookie is not readable here", async () => {
+    setCsrfCookie(null);
+    const fetchMock = vi.fn().mockImplementation((url) =>
+      Promise.resolve(okJson(url === "/api/auth/csrf/" ? { csrfToken: "from-body" } : {}))
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.createPlaylist({ name: "x" });
+    await api.createPlaylist({ name: "y" });
+
+    const csrfCalls = fetchMock.mock.calls.filter(([url]) => url === "/api/auth/csrf/");
+    expect(csrfCalls).toHaveLength(1);
+    expect(fetchMock.mock.calls[1][1].headers["X-CSRFToken"]).toBe("from-body");
+  });
+
+  it("reports an unreachable server during the CSRF fetch as a network error", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okJson({ user: {} })));
+    await api.login({ username: "a", password: "b" }); // signing in drops any CSRF token fetched earlier
+    setCsrfCookie(null);
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const err = await api.createPlaylist({ name: "x" }).catch((e) => e);
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/api/auth/csrf/"]);
+
+    expect(isNetworkError(err)).toBe(true);
+  });
+
+  it("attaches the HTTP status to errors, so callers can tell signed-out from other failures", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 403, text: () => Promise.resolve("{}") }));
+    expect((await api.me().catch((e) => e)).status).toBe(403);
+
+    const body = JSON.stringify({ detail: "nope" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404, text: () => Promise.resolve(body) }));
+    const refused = await api.checkInvite("t").catch((e) => e);
+    expect(refused.status).toBe(404);
+    expect(refused.message).toBe("nope");
+  });
+
+  it("logs in and registers with JSON and answers { user } with no token", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson({ user: { id: 1, username: "alice" } }, 201));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await api.login({ username: "alice", password: "pw" })).toEqual({ user: { id: 1, username: "alice" } });
+    await api.register({ username: "bob", email: "", password: "s3cure-pass" });
+
+    const [loginUrl, login] = fetchMock.mock.calls[0];
+    expect(loginUrl).toBe("/api/auth/login/");
+    expect(login.method).toBe("POST");
+    expect(login.credentials).toBe("include");
+    expect(login.headers["X-CSRFToken"]).toBe("cookietoken");
+    expect(JSON.parse(login.body)).toEqual({ username: "alice", password: "pw" });
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/auth/register/");
+  });
+
+  it("shows the server's sentence when a login is refused", async () => {
+    const body = JSON.stringify({ non_field_errors: ["Unable to log in with provided credentials."] });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 400, text: () => Promise.resolve(body) }));
+
+    await expect(api.login({ username: "a", password: "b" })).rejects.toThrow("Unable to log in with provided credentials.");
+  });
+
+  it("logs out with a CSRF-protected POST", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.logout();
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/auth/logout/");
+    expect(options.method).toBe("POST");
+    expect(options.headers["X-CSRFToken"]).toBe("cookietoken");
+  });
+
+  it("posts the invite token in the body, never in the URL", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson({ valid: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.checkInvite("secret-token");
+    await api.acceptInvite({ token: "secret-token", username: "dave", email: "", password: "s3cure-pass-xyz" });
+
+    const [checkUrl, check] = fetchMock.mock.calls[0];
+    expect(checkUrl).toBe("/api/auth/invites/check/");
+    expect(check.method).toBe("POST");
+    expect(JSON.parse(check.body)).toEqual({ token: "secret-token" });
+    const [acceptUrl, accept] = fetchMock.mock.calls[1];
+    expect(acceptUrl).toBe("/api/auth/invites/accept/");
+    expect(JSON.parse(accept.body).token).toBe("secret-token");
+    for (const [url] of fetchMock.mock.calls) expect(url).not.toContain("secret-token");
+  });
+
+  it("creates an invite with role and label", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson({ url: "http://x/invite/t", token: "t" }, 201));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect((await api.createInvite({ role: "readonly", label: "Sam" })).url).toBe("http://x/invite/t");
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/auth/invites/");
+    expect(JSON.parse(options.body)).toEqual({ role: "readonly", label: "Sam" });
+    expect(options.headers["X-CSRFToken"]).toBe("cookietoken");
   });
 
   it("builds the ROM list query from search, platform and page, skipping blanks", async () => {
@@ -110,7 +229,6 @@ describe("api client", () => {
     }));
     vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:rom"), revokeObjectURL: vi.fn() });
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
-    setToken("abc123");
 
     await api.downloadRom({ id: 7, title: "Zelda", filename: "Zelda (USA).nes", extension: ".nes" });
 
@@ -131,13 +249,13 @@ describe("api client", () => {
     const revokeObjectURL = vi.fn();
     vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
-    setToken("abc123");
 
     await api.downloadRom({ id: 7, title: "Zelda", extension: ".nes" });
 
     const [url, options] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/roms/7/download/");
-    expect(options.headers.Authorization).toBe("Token abc123");
+    expect(options.credentials).toBe("include");
+    expect(options.headers.Authorization).toBeUndefined();
     expect(createObjectURL).toHaveBeenCalledWith(blob);
     expect(click).toHaveBeenCalledTimes(1);
     expect(click.mock.contexts[0].download).toBe("Zelda.nes");
@@ -151,13 +269,13 @@ describe("api client", () => {
     vi.stubGlobal("fetch", fetchMock);
     const createObjectURL = vi.fn(() => "blob:cover");
     vi.stubGlobal("URL", { ...URL, createObjectURL });
-    setToken("abc123");
 
     const url = await api.coverObjectUrl({ id: 7, cover_art_url: "http://host/api/roms/7/cover/" });
 
     const [path, options] = fetchMock.mock.calls[0];
     expect(path).toBe("/api/roms/7/cover/");
-    expect(options.headers.Authorization).toBe("Token abc123");
+    expect(options.credentials).toBe("include");
+    expect(options.headers.Authorization).toBeUndefined();
     expect(createObjectURL).toHaveBeenCalledWith(blob);
     expect(url).toBe("blob:cover");
   });
@@ -168,7 +286,6 @@ describe("api client", () => {
       .mockResolvedValueOnce({ ok: false, status: 404, text: () => Promise.resolve("") })
       .mockResolvedValueOnce({ ok: true, status: 200 });
     vi.stubGlobal("fetch", fetchMock);
-    setToken("abc123");
 
     expect(await api.coverExists(7)).toBe(false);
     expect(await api.coverExists(7)).toBe(true);
@@ -176,7 +293,8 @@ describe("api client", () => {
     const [path, options] = fetchMock.mock.calls[0];
     expect(path).toBe("/api/roms/7/cover/");
     expect(options.method).toBe("HEAD");
-    expect(options.headers.Authorization).toBe("Token abc123");
+    expect(options.credentials).toBe("include");
+    expect(options.headers.Authorization).toBeUndefined();
   });
 
   it("approves a pairing code with an authenticated JSON POST", async () => {
@@ -184,14 +302,14 @@ describe("api client", () => {
       .fn()
       .mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({ detail: "Device approved." }) });
     vi.stubGlobal("fetch", fetchMock);
-    setToken("abc123");
 
     expect(await api.approveDevice("ABC123")).toEqual({ detail: "Device approved." });
 
     const [path, options] = fetchMock.mock.calls[0];
     expect(path).toBe("/api/devices/pair/approve");
     expect(options.method).toBe("POST");
-    expect(options.headers.Authorization).toBe("Token abc123");
+    expect(options.credentials).toBe("include");
+    expect(options.headers.Authorization).toBeUndefined();
     expect(options.headers["Content-Type"]).toBe("application/json");
     expect(JSON.parse(options.body)).toEqual({ code: "ABC123" });
   });
@@ -206,7 +324,6 @@ describe("api client", () => {
   it("fetches library status and queues rescans", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({ running: false }) });
     vi.stubGlobal("fetch", fetchMock);
-    setToken("abc123");
 
     expect(await api.libraryStatus()).toEqual({ running: false });
     expect(fetchMock.mock.calls[0][0]).toBe("/api/library/status/");
@@ -258,11 +375,12 @@ describe("api client", () => {
 
 describe("playlist api", () => {
   beforeEach(() => {
-    vi.stubGlobal("localStorage", mockLocalStorage());
+    setCsrfCookie("cookietoken");
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    setCsrfCookie(null);
   });
 
   function stubFetch(body = {}, status = 200) {
@@ -315,15 +433,27 @@ describe("consumeOidcFragment", () => {
     expect(window.location.hash).toBe("#section");
   });
 
-  it("reads the token and strips it from the address bar", () => {
-    window.history.replaceState(null, "", "/library?x=1#oidc_token=tok123");
-    expect(consumeOidcFragment()).toEqual({ token: "tok123", error: null });
-    expect(window.location.hash).toBe("");
-    expect(window.location.pathname + window.location.search).toBe("/library?x=1");
+  it("maps each fixed error code to its message and strips the fragment", () => {
+    for (const [code, message] of Object.entries(OIDC_ERROR_MESSAGES)) {
+      window.history.replaceState(null, "", `/library?x=1#oidc_error=${code}`);
+      expect(consumeOidcFragment()).toEqual({ error: message });
+      expect(window.location.hash).toBe("");
+      expect(window.location.pathname + window.location.search).toBe("/library?x=1");
+    }
+    expect(Object.keys(OIDC_ERROR_MESSAGES).sort()).toEqual(
+      ["disabled", "failed", "no_subject", "not_allowed", "provider_error"]
+    );
   });
 
-  it("reads an error", () => {
-    window.history.replaceState(null, "", "/#oidc_error=Single+sign-on+failed.");
-    expect(consumeOidcFragment()).toEqual({ token: null, error: "Single sign-on failed." });
+  it("never shows text taken from the URL: an unknown code is ignored, but still stripped", () => {
+    window.history.replaceState(null, "", "/#oidc_error=%3Cb%3EYour+account+is+hacked%3C%2Fb%3E");
+    expect(consumeOidcFragment()).toBeNull();
+    expect(window.location.hash).toBe("");
+  });
+
+  it("does not look for a token in the fragment", () => {
+    window.history.replaceState(null, "", "/#oidc_token=tok123");
+    expect(consumeOidcFragment()).toBeNull();
+    expect(window.location.hash).toBe("#oidc_token=tok123");
   });
 });

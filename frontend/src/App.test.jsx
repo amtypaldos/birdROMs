@@ -6,8 +6,6 @@ function page(results, { count = results.length, next = null, previous = null } 
 }
 
 vi.mock("./api/client", () => ({
-  getToken: vi.fn(() => null),
-  setToken: vi.fn(),
   consumeOidcFragment: vi.fn(() => null),
   api: {
     oidcLoginUrl: "/api/auth/oidc/login/",
@@ -16,6 +14,10 @@ vi.mock("./api/client", () => ({
     me: vi.fn(() => Promise.resolve({ id: 1, username: "alice", email: "", role: "readonly" })),
     login: vi.fn(),
     register: vi.fn(),
+    logout: vi.fn(() => Promise.resolve(null)),
+    checkInvite: vi.fn(() => Promise.resolve({ valid: true })),
+    acceptInvite: vi.fn(),
+    createInvite: vi.fn(),
     listRoms: vi.fn(() => Promise.resolve(page([]))),
     listPlatforms: vi.fn(() => Promise.resolve([])),
     createRom: vi.fn(),
@@ -36,10 +38,20 @@ vi.mock("./api/client", () => ({
 
 import App, { COVER_POLL_INTERVAL_MS, COVER_POLL_MAX_ATTEMPTS, platformFamily } from "./App";
 import { offlineError } from "./offline";
-import { api, consumeOidcFragment, getToken, setToken } from "./api/client";
+import { api, consumeOidcFragment } from "./api/client";
+
+// The app is signed in whenever `me()` answers (the stub does by default); a 401 from it means signed out.
+function httpError(status) {
+  return Object.assign(new Error("{}"), { status });
+}
+
+function signedOutOnce() {
+  api.me.mockRejectedValueOnce(httpError(401));
+}
 
 describe("App", () => {
-  it("renders the login form when there is no token", async () => {
+  it("renders the login form when there is no session", async () => {
+    signedOutOnce();
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Login" })).toBeInTheDocument();
@@ -50,32 +62,64 @@ describe("App", () => {
     expect(api.listRoms).not.toHaveBeenCalled();
   });
 
-  it("shows an offline notice, and stays signed in, when the API cannot be reached", async () => {
-    getToken.mockReturnValue("abc123");
+  it("shows an offline notice, not the login form, when the API cannot be reached at start-up", async () => {
     api.me.mockRejectedValueOnce(offlineError());
+
+    render(<App />);
+
+    expect(await screen.findByText(/You're offline/)).toBeInTheDocument();
+    // We can't tell signed-in from signed-out without the server, so neither screen is shown.
+    expect(screen.queryByRole("heading", { name: "Login" })).not.toBeInTheDocument();
+    expect(screen.queryByText("ROM Library")).not.toBeInTheDocument();
+    expect(api.authConfig).not.toHaveBeenCalled();
+  });
+
+  it("checks the session again when the connection comes back after an offline start", async () => {
+    api.me.mockRejectedValueOnce(offlineError());
+    render(<App />);
+    expect(await screen.findByText(/You're offline/)).toBeInTheDocument();
+
+    act(() => {
+      window.dispatchEvent(new Event("online"));
+    });
+
+    expect(await screen.findByText("ROM Library")).toBeInTheDocument();
+    expect(screen.queryByText(/You're offline/)).not.toBeInTheDocument();
+  });
+
+  it("stays signed in, with an offline notice, when the library cannot be reached", async () => {
     api.listRoms.mockRejectedValueOnce(offlineError());
 
     render(<App />);
 
     expect(await screen.findByText(/You're offline/)).toBeInTheDocument();
-    expect(setToken).not.toHaveBeenCalledWith(null);
+    expect(await screen.findByText("alice")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Login" })).not.toBeInTheDocument();
   });
 
-  it("logs out when the sign-in check is rejected with an HTTP error (401)", async () => {
-    getToken.mockReturnValue("stale");
-    api.me.mockRejectedValueOnce(new Error('{"detail":"Invalid token."}'));
+  it("shows the login form when the sign-in check is refused (401 or 403)", async () => {
+    for (const status of [401, 403]) {
+      api.me.mockRejectedValueOnce(httpError(status));
+
+      const { unmount } = render(<App />);
+
+      expect(await screen.findByRole("heading", { name: "Login" })).toBeInTheDocument();
+      expect(screen.queryByText(/You're offline/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument(); // signed out is not an error
+      unmount();
+    }
+  });
+
+  it("shows an error, not the library, when the sign-in check fails for another reason", async () => {
+    api.me.mockRejectedValueOnce(httpError(500));
 
     render(<App />);
 
-    await waitFor(() => expect(setToken).toHaveBeenCalledWith(null));
-    expect(await screen.findByRole("heading", { name: "Login" })).toBeInTheDocument();
-    expect(screen.queryByText(/You're offline/)).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText("ROM Library")).not.toBeInTheDocument();
   });
 
   it("shows no empty state or account-loading label while offline", async () => {
-    getToken.mockReturnValue("abc123");
-    api.me.mockRejectedValueOnce(offlineError());
     api.listRoms.mockRejectedValueOnce(offlineError());
 
     render(<App />);
@@ -86,7 +130,6 @@ describe("App", () => {
   });
 
   it("clears the offline notice and reloads when the connection comes back", async () => {
-    getToken.mockReturnValue("abc123");
     api.listRoms.mockRejectedValueOnce(offlineError());
 
     render(<App />);
@@ -102,7 +145,6 @@ describe("App", () => {
 
   it("downloads through the authenticated API instead of linking to media", async () => {
     const rom = { id: 3, title: "Zelda", platform: "NES", extension: ".nes", download_url: "/api/roms/3/download/" };
-    getToken.mockReturnValueOnce("abc123");
     api.listRoms.mockResolvedValueOnce(page([rom]));
 
     const { container } = render(<App />);
@@ -115,7 +157,6 @@ describe("App", () => {
   it("loads stored cover art with the token and skips ROMs without art", async () => {
     const withArt = { id: 3, title: "Zelda", platform: "NES", extension: ".nes", cover_art_url: "/api/roms/3/cover/" };
     const without = { id: 4, title: "Metroid", platform: "NES", extension: ".nes", cover_art_url: null };
-    getToken.mockReturnValueOnce("abc123");
     api.listRoms.mockResolvedValueOnce(page([withArt, without]));
     const revokeObjectURL = vi.fn(); // jsdom has no object URLs
     vi.stubGlobal("URL", { revokeObjectURL });
@@ -132,6 +173,7 @@ describe("App", () => {
   });
 
   it("shows only the SSO button when only OIDC is enabled", async () => {
+    signedOutOnce();
     api.authConfig.mockResolvedValueOnce({
       methods: ["oidc"],
       oidc: { provider_name: "Pocket ID", login_url: "/api/auth/oidc/login/" }
@@ -146,6 +188,7 @@ describe("App", () => {
   });
 
   it("shows both the local form and the SSO button when both are enabled", async () => {
+    signedOutOnce();
     api.authConfig.mockResolvedValueOnce({ methods: ["local", "oidc"], oidc: { provider_name: "SSO" } });
 
     render(<App />);
@@ -156,6 +199,7 @@ describe("App", () => {
   });
 
   it("hides the SSO button when only local login is enabled", async () => {
+    signedOutOnce();
     render(<App />);
 
     expect(await screen.findByPlaceholderText("Username")).toBeInTheDocument();
@@ -163,6 +207,7 @@ describe("App", () => {
   });
 
   it("hides the create-account button when registration is closed", async () => {
+    signedOutOnce();
     api.authConfig.mockResolvedValueOnce({ methods: ["local"], registration: false });
 
     render(<App />);
@@ -172,6 +217,7 @@ describe("App", () => {
   });
 
   it("hides the create-account button when the config has no registration flag", async () => {
+    signedOutOnce();
     render(<App />);
 
     expect(await screen.findByRole("button", { name: "Login" })).toBeInTheDocument();
@@ -179,9 +225,9 @@ describe("App", () => {
   });
 
   it("registers a local account and signs in", async () => {
+    signedOutOnce();
     api.authConfig.mockResolvedValueOnce({ methods: ["local"], registration: true });
-    api.register.mockResolvedValueOnce({ token: "newtok", user: { username: "bob" } });
-    getToken.mockReturnValueOnce(null).mockReturnValue(null);
+    api.register.mockResolvedValueOnce({ user: { username: "bob" } });
 
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Create account" }));
@@ -193,34 +239,36 @@ describe("App", () => {
     await waitFor(() =>
       expect(api.register).toHaveBeenCalledWith({ username: "bob", email: "bob@example.com", password: "s3cure-pass" })
     );
-    expect(setToken).toHaveBeenCalledWith("newtok");
+    // The session cookie is the sign-in: the app just asks `me()` who it is, and never looks for a token.
     expect(await screen.findByText("ROM Library")).toBeInTheDocument();
+    expect(api.me).toHaveBeenCalledTimes(2);
+    expect(localStorage.length).toBe(0);
   });
 
-  it("stores the token from an SSO callback and shows the signed-in user", async () => {
-    consumeOidcFragment.mockReturnValueOnce({ token: "ssotok", error: null });
-    getToken.mockReturnValue("ssotok");
+  it("is signed in after an SSO redirect by asking me(), with no token anywhere", async () => {
+    window.history.replaceState(null, "", "/");
     api.me.mockResolvedValueOnce({ id: 7, username: "grace", email: "g@example.com", role: "super_admin" });
 
     render(<App />);
 
-    expect(setToken).toHaveBeenCalledWith("ssotok");
     expect(await screen.findByText("grace")).toBeInTheDocument();
     expect(screen.getByText(/super_admin/)).toBeInTheDocument();
     expect(api.authConfig).not.toHaveBeenCalled();
+    expect(localStorage.length).toBe(0);
   });
 
   it("shows an SSO error returned by the callback", async () => {
-    consumeOidcFragment.mockReturnValueOnce({ token: null, error: "Single sign-on failed. Please try again." });
+    signedOutOnce();
+    consumeOidcFragment.mockReturnValueOnce({ error: "Single sign-on failed. Please try again." });
 
     render(<App />);
 
     expect(await screen.findByText("Single sign-on failed. Please try again.")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Login" })).toBeInTheDocument();
+    expect(api.me).not.toHaveBeenCalled(); // a failed redirect means there is no session to look for
   });
 
   it("drives the library with search, platform filter and pagination", async () => {
-    getToken.mockReturnValue("tok");
     const zelda = { id: 1, title: "Zelda", platform: "NES", extension: ".nes" };
     const metroid = { id: 2, title: "Metroid", platform: "NES", extension: ".nes" };
     api.listPlatforms.mockResolvedValue(["Game Boy Advance", "NES"]);
@@ -254,7 +302,6 @@ describe("App", () => {
   });
 
   it("hides upload and scrape controls from readonly users", async () => {
-    getToken.mockReturnValue("tok");
     api.listRoms.mockResolvedValue(page([{ id: 1, title: "Zelda", platform: "NES", extension: ".nes" }]));
 
     render(<App />);
@@ -269,7 +316,6 @@ describe("App", () => {
   });
 
   it("shows upload and scrape controls to super_admin users", async () => {
-    getToken.mockReturnValue("tok");
     api.me.mockResolvedValueOnce({ id: 2, username: "root", email: "", role: "super_admin" });
     api.listRoms.mockResolvedValue(page([{ id: 1, title: "Zelda", platform: "NES", extension: ".nes" }]));
 
@@ -282,7 +328,6 @@ describe("App", () => {
   });
 
   it("uploads just the file, with no title input", async () => {
-    getToken.mockReturnValue("tok");
     api.me.mockResolvedValueOnce({ id: 2, username: "root", email: "", role: "super_admin" });
     api.listRoms.mockResolvedValue(page([]));
     api.createRom.mockResolvedValue({});
@@ -302,7 +347,6 @@ describe("App", () => {
   });
 
   it("shows an upload refusal from the API in the upload panel", async () => {
-    getToken.mockReturnValue("tok");
     api.me.mockResolvedValueOnce({ id: 2, username: "root", email: "", role: "super_admin" });
     api.listRoms.mockResolvedValue(page([]));
     api.createRom.mockRejectedValue(new Error("This library is read-only."));
@@ -316,7 +360,6 @@ describe("App", () => {
   });
 
   it("renders a ROM card with no uploader and shows the library panel only to admins", async () => {
-    getToken.mockReturnValue("tok");
     api.listRoms.mockResolvedValue(page([{ id: 1, title: "Zelda", platform: "NES", extension: ".nes", uploaded_by_username: null }]));
 
     const { unmount } = render(<App />);
@@ -333,7 +376,6 @@ describe("App", () => {
     const tagged = { id: 1, title: "Zelda", filename: "Zelda (USA) [!].nes", tags: ["USA", "Verified good dump"], platform: "NES", extension: ".nes" };
     const plain = { id: 2, title: "Metroid", platform: "NES", extension: ".nes" };
     const empty = { id: 3, title: "Kirby", filename: "Kirby.nes", tags: [], platform: "NES", extension: ".nes" };
-    getToken.mockReturnValueOnce("tok");
     api.listRoms.mockResolvedValueOnce(page([tagged, plain, empty]));
 
     const { container } = render(<App />);
@@ -344,20 +386,34 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: "Metroid" })).toHaveAttribute("title", "Metroid");
   });
 
-  it("renders no write controls before the user's role is known", async () => {
-    getToken.mockReturnValue("tok");
+  it("shows neither the library nor write controls until the session check answers", async () => {
     api.me.mockReturnValueOnce(new Promise(() => {}));
     api.listRoms.mockResolvedValue(page([{ id: 1, title: "Zelda", platform: "NES", extension: ".nes" }]));
 
     render(<App />);
 
-    expect(await screen.findByText("Zelda")).toBeInTheDocument();
+    expect(await screen.findByText("Checking your session…")).toBeInTheDocument();
+    expect(screen.queryByText("Zelda")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Login" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Upload ROM" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Scrape Cover" })).not.toBeInTheDocument();
+    expect(api.listRoms).not.toHaveBeenCalled();
+  });
+
+  it("stays signed in and says so when logging out fails", async () => {
+    api.logout.mockRejectedValueOnce(offlineError());
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Logout" }));
+
+    expect(await screen.findByText(/You're offline/)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Login" })).not.toBeInTheDocument();
+    expect(screen.getByText("alice")).toBeInTheDocument();
   });
 
   it("shows the role after a local login and logs out back to the login form", async () => {
-    api.login.mockResolvedValueOnce({ token: "loctok" });
+    signedOutOnce();
+    api.login.mockResolvedValueOnce({ user: { username: "root" } });
     api.me.mockResolvedValueOnce({ id: 2, username: "root", email: "", role: "super_admin" });
 
     render(<App />);
@@ -370,14 +426,13 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Logout" }));
 
-    expect(setToken).toHaveBeenLastCalledWith(null);
+    await waitFor(() => expect(api.logout).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("heading", { name: "Login" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Upload ROM" })).not.toBeInTheDocument();
     expect(screen.queryByText("root")).not.toBeInTheDocument();
   });
 
   it("says when no ROMs match the filters", async () => {
-    getToken.mockReturnValue("tok");
 
     render(<App />);
 
@@ -385,7 +440,6 @@ describe("App", () => {
   });
 
   it("renders the library as a grid of cover cards with platform badges and placeholders", async () => {
-    getToken.mockReturnValue("tok");
     const zelda = { id: 1, title: "Zelda", platform: "NES", extension: ".nes", cover_art_url: "/api/roms/1/cover/" };
     const sonic = { id: 2, title: "Sonic", platform: "Sega Genesis", extension: ".md", cover_art_url: null };
     api.listRoms.mockResolvedValue(page([zelda, sonic]));
@@ -411,7 +465,6 @@ describe("App", () => {
   });
 
   it("shows loading skeletons until the first page arrives", async () => {
-    getToken.mockReturnValue("tok");
     api.listRoms.mockReturnValueOnce(new Promise(() => {}));
 
     render(<App />);
@@ -441,7 +494,6 @@ describe("global drag-and-drop upload", () => {
   }
 
   async function renderAs(role) {
-    getToken.mockReturnValue("tok");
     api.me.mockResolvedValue({ id: 2, username: "root", email: "", role });
     api.listRoms.mockResolvedValue(page([]));
     render(<App />);
@@ -528,7 +580,6 @@ describe("global drag-and-drop upload", () => {
   });
 
   it("removes its window listeners on unmount", async () => {
-    getToken.mockReturnValue("tok");
     api.me.mockResolvedValue({ id: 2, username: "root", email: "", role: "super_admin" });
     api.listRoms.mockResolvedValue(page([]));
     const add = vi.spyOn(window, "addEventListener");
@@ -556,7 +607,6 @@ describe("cover polling", () => {
   }
 
   async function renderFresh() {
-    getToken.mockReturnValue("tok");
     api.me.mockResolvedValue({ id: 1, username: "alice", email: "", role: "readonly" });
     api.listRoms.mockResolvedValue(page([fresh]));
     api.coverObjectUrl.mockResolvedValue("blob:cover");
@@ -647,7 +697,6 @@ describe("approve device page", () => {
   });
 
   it("test_approve_device_page_calls_api_and_shows_result", async () => {
-    getToken.mockReturnValue("tok");
     openPairLink();
 
     render(<App />);
@@ -665,7 +714,6 @@ describe("approve device page", () => {
   });
 
   it("shows a readable error when approval is rejected and allows retrying", async () => {
-    getToken.mockReturnValue("tok");
     openPairLink();
     api.approveDevice.mockRejectedValueOnce(new Error("This pairing code has expired."));
 
@@ -681,9 +729,9 @@ describe("approve device page", () => {
   });
 
   it("asks a signed-out visitor to log in, then shows the approve view", async () => {
-    getToken.mockReturnValue(null);
+    signedOutOnce();
     openPairLink();
-    api.login.mockResolvedValueOnce({ token: "loctok" });
+    api.login.mockResolvedValueOnce({ user: { username: "alice" } });
 
     render(<App />);
 
@@ -692,7 +740,6 @@ describe("approve device page", () => {
     expect(screen.queryByRole("button", { name: "Approve this device" })).not.toBeInTheDocument();
     expect(api.approveDevice).not.toHaveBeenCalled();
 
-    getToken.mockReturnValue("loctok");
     fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "alice" } });
     fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "pw" } });
     fireEvent.click(screen.getByRole("button", { name: "Login" }));
@@ -702,7 +749,6 @@ describe("approve device page", () => {
   });
 
   it("explains a pairing link that has no code", async () => {
-    getToken.mockReturnValue("tok");
     openPairLink("");
 
     render(<App />);
@@ -712,7 +758,6 @@ describe("approve device page", () => {
   });
 
   it("leaves the library alone on ordinary paths", async () => {
-    getToken.mockReturnValue("tok");
 
     render(<App />);
 
@@ -724,12 +769,9 @@ describe("approve device page", () => {
 describe("App playlists", () => {
   afterEach(() => {
     window.history.replaceState(null, "", "/");
-    getToken.mockReset();
-    getToken.mockReturnValue(null);
   });
 
   it("switches between Library and Playlists with the nav and the address bar hash", async () => {
-    getToken.mockReturnValue("abc123");
     api.listRoms.mockResolvedValue(page([{ id: 1, title: "Zelda", platform: "NES", extension: ".nes" }]));
     api.listPlaylists.mockResolvedValue([{ id: 3, name: "Road trip", created_by: 1, rom_count: 2 }]);
     render(<App />);
@@ -748,7 +790,6 @@ describe("App playlists", () => {
   });
 
   it("marks the tab of the view being shown as current, also after hash changes", async () => {
-    getToken.mockReturnValue("abc123");
     render(<App />);
     const library = await screen.findByRole("button", { name: "Library" });
     const playlists = screen.getByRole("button", { name: "Playlists" });
@@ -771,14 +812,12 @@ describe("App playlists", () => {
 
   it("opens straight to playlists from #/playlists", async () => {
     window.history.replaceState(null, "", "/#/playlists");
-    getToken.mockReturnValue("abc123");
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Playlists" })).toBeInTheDocument();
   });
 
   it("opens the handheld install guide from the nav and from #/handheld", async () => {
-    getToken.mockReturnValue("abc123");
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Handheld" }));
@@ -792,7 +831,6 @@ describe("App playlists", () => {
   });
 
   it("offers Add to playlist on ROM cards", async () => {
-    getToken.mockReturnValue("abc123");
     api.listRoms.mockResolvedValue(page([{ id: 1, title: "Zelda", platform: "NES", extension: ".nes" }]));
     render(<App />);
 
@@ -800,8 +838,158 @@ describe("App playlists", () => {
   });
 
   it("does not show the nav on the login screen", async () => {
+    signedOutOnce();
     render(<App />);
     await screen.findByRole("heading", { name: "Login" });
     expect(screen.queryByRole("button", { name: "Playlists" })).not.toBeInTheDocument();
+  });
+});
+
+describe("invite links", () => {
+  function openInvite(path = "/invite/abc-123_XYZ") {
+    window.history.pushState(null, "", path);
+  }
+
+  afterEach(() => {
+    window.history.pushState(null, "", "/");
+  });
+
+  function fillAndSubmit() {
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "dave" } });
+    fireEvent.change(screen.getByPlaceholderText("Email (optional)"), { target: { value: "dave@example.com" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "s3cure-pass-xyz" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+  }
+
+  it("checks the token from the path, then shows the sign-up form instead of the login card", async () => {
+    signedOutOnce();
+    openInvite();
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Join birdROMs" })).toBeInTheDocument();
+    await screen.findByPlaceholderText("Username");
+    expect(api.checkInvite).toHaveBeenCalledWith("abc-123_XYZ");
+    expect(screen.queryByRole("heading", { name: "Login" })).not.toBeInTheDocument();
+    expect(api.authConfig).not.toHaveBeenCalled();
+  });
+
+  it("accepts the invite, signs in with the session and lands in the library", async () => {
+    signedOutOnce();
+    openInvite();
+    api.acceptInvite.mockResolvedValueOnce({ user: { username: "dave" } });
+
+    render(<App />);
+    await screen.findByPlaceholderText("Username");
+    fillAndSubmit();
+
+    await waitFor(() =>
+      expect(api.acceptInvite).toHaveBeenCalledWith({
+        token: "abc-123_XYZ",
+        username: "dave",
+        email: "dave@example.com",
+        password: "s3cure-pass-xyz"
+      })
+    );
+    expect(await screen.findByText("ROM Library")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/");
+    expect(window.location.search).toBe("");
+    expect(localStorage.length).toBe(0);
+  });
+
+  it("shows one unavailable message when the link is invalid, expired, used or revoked", async () => {
+    signedOutOnce();
+    openInvite();
+    api.checkInvite.mockRejectedValueOnce(Object.assign(new Error("gone"), { status: 404 }));
+
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("This invite link is invalid, expired or already used.");
+    expect(screen.queryByPlaceholderText("Username")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Login" })).not.toBeInTheDocument();
+  });
+
+  it("shows the same message if the link dies between the check and the sign-up", async () => {
+    signedOutOnce();
+    openInvite();
+    api.acceptInvite.mockRejectedValueOnce(Object.assign(new Error("gone"), { status: 404 }));
+
+    render(<App />);
+    await screen.findByPlaceholderText("Username");
+    fillAndSubmit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("This invite link is invalid, expired or already used.");
+    expect(screen.queryByPlaceholderText("Username")).not.toBeInTheDocument();
+  });
+
+  it("shows a refused username or password and keeps the form", async () => {
+    signedOutOnce();
+    openInvite();
+    api.acceptInvite.mockRejectedValueOnce(Object.assign(new Error("That username is already taken."), { status: 400 }));
+
+    render(<App />);
+    await screen.findByPlaceholderText("Username");
+    fillAndSubmit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("That username is already taken.");
+    expect(screen.getByPlaceholderText("Username")).toBeInTheDocument();
+  });
+
+  it("goes to the login card from the unavailable message", async () => {
+    signedOutOnce();
+    openInvite();
+    api.checkInvite.mockRejectedValueOnce(Object.assign(new Error("gone"), { status: 404 }));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Go to login" }));
+
+    expect(await screen.findByRole("heading", { name: "Login" })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("does not treat other paths as invites", async () => {
+    signedOutOnce();
+    openInvite("/invites-are-great");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Login" })).toBeInTheDocument();
+    expect(api.checkInvite).not.toHaveBeenCalled();
+  });
+});
+
+describe("creating invites", () => {
+  it("offers an admin a short form and shows the link once", async () => {
+    api.me.mockResolvedValueOnce({ id: 2, username: "root", email: "", role: "super_admin" });
+    api.createInvite.mockResolvedValueOnce({ id: 5, url: "https://roms.example.com/invite/tok123", token: "tok123" });
+    render(<App />);
+
+    fireEvent.click(await screen.findByText("Invite a friend"));
+    fireEvent.change(screen.getByLabelText("Invite role"), { target: { value: "super_admin" } });
+    fireEvent.change(screen.getByLabelText("Invite label"), { target: { value: " Sam " } });
+    fireEvent.click(screen.getByRole("button", { name: "Create invite link" }));
+
+    await waitFor(() => expect(api.createInvite).toHaveBeenCalledWith({ role: "super_admin", label: "Sam" }));
+    expect(await screen.findByLabelText("Invite link")).toHaveValue("https://roms.example.com/invite/tok123");
+    expect(screen.getByText(/will not be shown again/)).toBeInTheDocument();
+  });
+
+  it("does not show the invite form to readonly users", async () => {
+    render(<App />);
+
+    expect(await screen.findByText("ROM Library")).toBeInTheDocument();
+    expect(screen.queryByText("Invite a friend")).not.toBeInTheDocument();
+  });
+
+  it("explains when invites are unavailable because local login is off", async () => {
+    api.me.mockResolvedValueOnce({ id: 2, username: "root", email: "", role: "super_admin" });
+    api.createInvite.mockRejectedValueOnce(Object.assign(new Error("Not found."), { status: 404 }));
+    render(<App />);
+
+    fireEvent.click(await screen.findByText("Invite a friend"));
+    fireEvent.click(screen.getByRole("button", { name: "Create invite link" }));
+
+    expect(await screen.findByText(/local login, which is turned off/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Invite link")).not.toBeInTheDocument();
   });
 });

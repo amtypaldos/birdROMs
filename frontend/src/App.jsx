@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { OFFLINE_MESSAGE, isNetworkError } from "./offline";
-import { api, consumeOidcFragment, getToken, setToken } from "./api/client";
+import { api, consumeOidcFragment } from "./api/client";
 import AddToPlaylist from "./AddToPlaylist";
 import LibraryStatusPanel from "./LibraryStatusPanel";
 import HandheldView from "./HandheldView";
+import { InviteAcceptPanel, InviteCreator, inviteTokenFromPath } from "./Invites";
 import PlaylistsView from "./PlaylistsView";
 
 function LocalAuthForm({ onAuthed, registration }) {
@@ -17,10 +18,9 @@ function LocalAuthForm({ onAuthed, registration }) {
   async function handleSubmit(event) {
     event.preventDefault();
     try {
-      const data = registering
-        ? await api.register({ username, email, password })
-        : await api.login({ username, password });
-      setToken(data.token);
+      // Both answer `{ user }` and set the HttpOnly session cookie; the app then asks `me()` who is signed in.
+      if (registering) await api.register({ username, email, password });
+      else await api.login({ username, password });
       setError("");
       onAuthed();
     } catch (err) {
@@ -562,27 +562,38 @@ function ViewNav({ view, onView }) {
   );
 }
 
-// Pick up an SSO callback result before the first render so the app starts signed in.
+// A failed SSO redirect carries a fixed error code in the fragment: show its message and strip it. Without
+// one there is nothing to read: a successful sign-in is just the session cookie, which `me()` will find.
 function initialAuth() {
   const result = consumeOidcFragment();
-  if (result?.token) setToken(result.token);
-  return { authed: Boolean(getToken()), error: result?.error || "" };
+  return { error: result?.error || "" };
+}
+
+function isSignedOut(err) {
+  return err?.status === 401 || err?.status === 403;
 }
 
 export default function App() {
   const [initial] = useState(initialAuth);
   const [pairing, setPairing] = useState(initialPairing);
+  const [inviteToken, setInviteToken] = useState(() => inviteTokenFromPath());
   const [romPage, setRomPage] = useState(EMPTY_PAGE);
   const [query, setQuery] = useState(DEFAULT_QUERY);
   const [platforms, setPlatforms] = useState([]);
   const latestRequest = useRef(0);
   const [view, setView] = useState(viewFromHash);
-  const [authed, setAuthed] = useState(initial.authed);
+  const [authed, setAuthed] = useState(false);
+  // Until `me()` answers we don't know whether the session cookie is good; after an SSO error we skip the check.
+  const [checking, setChecking] = useState(!initial.error);
+  // True when the check could not reach the server at all: not signed out, just unknown.
+  const [sessionUnknown, setSessionUnknown] = useState(false);
   const [error, setError] = useState(initial.error);
   const [authConfig, setAuthConfig] = useState(null);
   const [me, setMe] = useState(null);
-  const [loading, setLoading] = useState(initial.authed);
+  const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
+  // The sign-in state is known (neither still being checked nor unreachable), so the signed-out screens may show.
+  const sessionKnown = !checking && !sessionUnknown;
 
   // Only the newest request may update the list, so a slow response for an old filter
   // cannot overwrite the results of a newer one.
@@ -605,21 +616,43 @@ export default function App() {
     }
   }, [query]);
 
-  useEffect(() => {
-    if (authed) {
-      // An unreachable server is not a bad session: stay signed in and let the offline notice show.
-      api.me().then(setMe, (err) => {
-        if (!isNetworkError(err)) logout();
-      });
+  // `me()` is how the app learns it is signed in: 401/403 means signed out. An unreachable server is not a bad
+  // session; it leaves the state unknown (and the offline notice up) until the connection returns.
+  const checkSession = useCallback(async () => {
+    try {
+      const user = await api.me();
+      setMe(user);
+      setLoading(true);
+      setAuthed(true);
+      setSessionUnknown(false);
+      setOffline(false); // the server answered, so any earlier offline notice is stale
+    } catch (err) {
+      if (isNetworkError(err)) {
+        setOffline(true);
+        setSessionUnknown(true);
+      } else {
+        clearSession();
+        if (!isSignedOut(err)) setError(String(err.message || err));
+      }
+    } finally {
+      setChecking(false);
     }
-  }, [authed]);
+  }, []);
 
   useEffect(() => {
-    if (!authed) return undefined;
-    const retry = () => loadRoms();
+    if (checking) checkSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only the first check runs from here
+  }, []);
+
+  useEffect(() => {
+    if (!authed && !sessionUnknown) return undefined;
+    const retry = () => {
+      if (authed) loadRoms();
+      else checkSession();
+    };
     window.addEventListener("online", retry);
     return () => window.removeEventListener("online", retry);
-  }, [authed, loadRoms]);
+  }, [authed, sessionUnknown, loadRoms, checkSession]);
 
   useEffect(() => {
     if (authed) loadRoms();
@@ -627,13 +660,13 @@ export default function App() {
   }, [authed, loadRoms]);
 
   useEffect(() => {
-    if (!authed && !authConfig) {
+    if (!authed && sessionKnown && !inviteToken && !authConfig) {
       api.authConfig().then(setAuthConfig, (err) => {
         if (isNetworkError(err)) setOffline(true);
         else setError(String(err.message || err));
       });
     }
-  }, [authed, authConfig]);
+  }, [authed, sessionKnown, inviteToken, authConfig]);
 
   useEffect(() => {
     const sync = () => setView(viewFromHash());
@@ -660,13 +693,35 @@ export default function App() {
     }
   }
 
-  function logout() {
-    setToken(null);
+  // Forget the signed-in state locally (the session is already gone, or was just ended on the server).
+  function clearSession() {
     setAuthed(false);
     setRomPage(EMPTY_PAGE);
     setQuery(DEFAULT_QUERY);
     setPlatforms([]);
     setMe(null);
+  }
+
+  async function logout() {
+    try {
+      await api.logout();
+    } catch (err) {
+      // Still signed in on the server, so don't pretend otherwise.
+      if (isNetworkError(err)) setOffline(true);
+      else setError(String(err.message || err));
+      return;
+    }
+    clearSession();
+  }
+
+  function leaveInvite() {
+    window.history.replaceState(null, "", "/");
+    setInviteToken(null);
+  }
+
+  async function inviteAccepted() {
+    leaveInvite();
+    await checkSession();
   }
 
   function leavePairing() {
@@ -676,6 +731,7 @@ export default function App() {
 
   // Write controls are only rendered for super_admin, and not until the role is known.
   const canWrite = me?.role === SUPER_ADMIN;
+  const showApp = authed && !pairing && !inviteToken;
 
   return (
     <>
@@ -685,12 +741,18 @@ export default function App() {
         </h1>
         {authed ? <SessionBar me={me} offline={offline} onLogout={logout} /> : null}
       </header>
-      <main className={`container${authed && !pairing ? "" : " container-auth"}`}>
+      <main className={`container${showApp ? "" : " container-auth"}`}>
         {offline ? <p className="offline banner" role="status">{OFFLINE_MESSAGE}</p> : null}
         {error ? <p className="error banner" role="alert">{error}</p> : null}
-        {pairing ? <ApprovePanel code={pairing.code} authed={authed} onDone={leavePairing} /> : null}
-        {!authed ? <AuthPanel config={authConfig} onAuthed={() => setAuthed(true)} /> : null}
-        {authed && !pairing ? (
+        {checking && !inviteToken ? (
+          <section className="card auth-card">
+            <p className="muted loading-text">Checking your session…</p>
+          </section>
+        ) : null}
+        {inviteToken ? <InviteAcceptPanel token={inviteToken} onAccepted={inviteAccepted} onDone={leaveInvite} /> : null}
+        {pairing && sessionKnown ? <ApprovePanel code={pairing.code} authed={authed} onDone={leavePairing} /> : null}
+        {!authed && sessionKnown && !inviteToken ? <AuthPanel config={authConfig} onAuthed={checkSession} /> : null}
+        {showApp ? (
           <>
             <ViewNav view={view} onView={changeView} />
             {view === "playlists" ? (
@@ -698,6 +760,7 @@ export default function App() {
             ) : null}
             {view === "handheld" ? <HandheldView /> : null}
             {view === "library" ? <LibraryStatusPanel me={me} /> : null}
+            {view === "library" && canWrite ? <InviteCreator /> : null}
             {view === "library" && canWrite ? <GlobalDropzone onUploaded={loadRoms} /> : null}
             {view === "library" && canWrite ? <UploadPanel onUploaded={loadRoms} /> : null}
             {view === "library" ? (

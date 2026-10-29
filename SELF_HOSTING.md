@@ -55,7 +55,7 @@ POSTGRES_PASSWORD=<a long random password>
 
 If a TLS-terminating proxy sits in front of the `web` container, also set `NUM_PROXIES=2`
 (default `1`: the `web` nginx only). It tells Django how many proxies to trust in
-`X-Forwarded-For`, which the sign-up throttle uses to find the real client address.
+`X-Forwarded-For`, which the login, sign-up and invite throttles use to find the real client address.
 
 `POSTGRES_*` configures both the database container (it creates the database on first start)
 and the backend's connection. `POSTGRES_HOST`, `POSTGRES_PORT` and `MEDIA_ROOT` are fixed by the
@@ -67,6 +67,11 @@ still a placeholder. Local login is off unless `AUTH_METHODS` includes `local` (
 separate and closed by default: create users in `/admin/`, or open sign-up with
 `ALLOW_REGISTRATION=true` (or by ticking *Registration settings* in `/admin/` while the variable
 is unset; a non-empty `ALLOW_REGISTRATION` overrides the checkbox).
+
+Web sign-in uses an HttpOnly session cookie (14 days, renewed on activity; change it with
+`SESSION_COOKIE_AGE`, in seconds) with CSRF protection, so `DJANGO_CSRF_TRUSTED_ORIGINS` and
+`DJANGO_BEHIND_HTTPS_PROXY=True` must match how you reach the site. Handheld device tokens are unchanged,
+read-only, and stop working after `DEVICE_TOKEN_IDLE_DAYS` of disuse (default 365, `0` = never).
 
 Want the env file outside the checkout? Point Compose at it with
 `BIRDROMS_ENV_FILE=/etc/birdroms/birdroms.env`.
@@ -103,6 +108,18 @@ docker compose -f docker-compose.prod.yml exec backend python manage.py createsu
 
 Sign in with that account in the web UI to upload ROMs and manage the library, or at `/admin/` to
 manage users. In the admin you assign roles by adding users to the `super_admin` or `readonly` group.
+
+To bring in a friend without opening self-registration, make an invite link. It works once and expires
+after `INVITE_TTL_DAYS` (default 7):
+
+```bash
+docker compose -f docker-compose.prod.yml exec backend \
+  python manage.py create_invite --base-url https://roms.example.com --label "Sam"
+```
+
+(`--role super_admin` makes an admin; the default is `readonly`.) Signed in as an admin you can also use
+**Invite a friend** on the Library page. The link is shown once and cannot be recovered; revoke an unused
+one in `/admin/` under *Accounts > Invites*.
 
 For an SSO-only setup, members of `OIDC_ADMIN_GROUP` become `super_admin` on their first
 login (see [step 6](#6-single-sign-on-oidc--pocket-id-example)). You still need a

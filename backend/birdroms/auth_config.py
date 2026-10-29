@@ -16,6 +16,46 @@ def _parse_bool(name, raw):
     raise ImproperlyConfigured(f"{name} must be true or false, got {raw!r}.")
 
 
+def _parse_int(env, name, default, minimum):
+    raw = env.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        value = minimum - 1
+    if value < minimum:
+        raise ImproperlyConfigured(f"{name} must be an integer of at least {minimum}, got {raw!r}.")
+    return value
+
+
+def _parse_list(env, name):
+    return [item.strip() for item in env.get(name, "").split(",") if item.strip()]
+
+
+def parse_invite_ttl_days(env) -> int:
+    """`INVITE_TTL_DAYS`: how long a new invite link stays valid by default (default 7)."""
+    return _parse_int(env, "INVITE_TTL_DAYS", 7, 1)
+
+
+def parse_session_age(env) -> int:
+    """`SESSION_COOKIE_AGE` in seconds (default 14 days). Sessions renew on activity."""
+    return _parse_int(env, "SESSION_COOKIE_AGE", 14 * 24 * 3600, 1)
+
+
+def parse_device_token_idle_days(env) -> int:
+    """`DEVICE_TOKEN_IDLE_DAYS`: a paired device unused this long stops working (default 365; 0 = never)."""
+    return _parse_int(env, "DEVICE_TOKEN_IDLE_DAYS", 365, 0)
+
+
+def parse_cache_settings(env) -> dict:
+    """Throttle counters need a cache shared by every worker: Redis when `REDIS_URL` is set, else per-process."""
+    redis_url = env.get("REDIS_URL", "").strip()
+    if redis_url:
+        return {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": redis_url}}
+    return {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+
+
 def parse_auth_methods(env) -> frozenset:
     """Read the comma-separated `AUTH_METHODS` (default `local`); order is not significant."""
     raw = env.get("AUTH_METHODS", "").strip() or "local"
@@ -61,5 +101,7 @@ def parse_oidc_settings(env, methods) -> dict:
         "ADMIN_GROUP": env.get("OIDC_ADMIN_GROUP", "").strip(),
         "LOGIN_REDIRECT_URL": env.get("OIDC_LOGIN_REDIRECT_URL", "").strip() or "/",
         "PROVIDER_NAME": env.get("OIDC_PROVIDER_NAME", "").strip() or "SSO",
+        "ALLOWED_GROUPS": _parse_list(env, "OIDC_ALLOWED_GROUPS"),
+        "ALLOWED_EMAIL_DOMAINS": [d.lstrip("@").lower() for d in _parse_list(env, "OIDC_ALLOWED_EMAIL_DOMAINS")],
         "LINK_BY_EMAIL": _parse_bool("OIDC_LINK_BY_EMAIL", env.get("OIDC_LINK_BY_EMAIL", "") or "false"),
     }

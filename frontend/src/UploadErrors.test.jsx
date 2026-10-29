@@ -10,7 +10,8 @@ function json(body, status = 200) {
 }
 
 beforeEach(() => {
-  localStorage.setItem("birdroms_token", "tok");
+  // Signed in by the session cookie (the stub answers /auth/me/); unsafe requests echo the CSRF cookie.
+  document.cookie = "csrftoken=csrf-tok; path=/";
   vi.stubGlobal("fetch", vi.fn((url, options = {}) => {
     if (url.endsWith("/auth/me/")) return Promise.resolve(json({ id: 1, username: "root", email: "", role: "super_admin" }));
     if (url.endsWith("/auth/config/")) return Promise.resolve(json({ methods: ["local"] }));
@@ -25,7 +26,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
-  localStorage.clear();
+  document.cookie = "csrftoken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
   vi.unstubAllGlobals();
 });
 
@@ -37,6 +38,10 @@ describe("upload refusals with the real client", () => {
     fireEvent.click(screen.getByRole("button", { name: "Upload" }));
 
     expect(await screen.findByText(SENTENCE)).toBeInTheDocument();
+    const upload = fetch.mock.calls.find(([url, options]) => url.endsWith("/roms/") && options?.method === "POST");
+    expect(upload[1].credentials).toBe("include");
+    expect(upload[1].headers["X-CSRFToken"]).toBe("csrf-tok");
+    expect(upload[1].headers.Authorization).toBeUndefined();
   });
 
   it("shows the sentence in the bulk drop queue", async () => {
