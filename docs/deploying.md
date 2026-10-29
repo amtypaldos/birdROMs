@@ -20,11 +20,11 @@ ROMs (`LIBRARY_WRITE_COVERS`). birdROMs never deletes, moves or renames files in
 
 The GitHub Actions workflow [`docker-publish.yml`](../.github/workflows/docker-publish.yml)
 publishes two multi-arch images (linux/amd64 and linux/arm64, so a Raspberry Pi or an ARM NAS works)
-to GHCR on every push to `main` and on `vX.Y.Z` tags (a tag also creates a GitHub Release):
+to GHCR on every push to `main` and on date tags `vYYYY.MM.DD` (or `vYYYY.MM.DD.N`) (a tag also creates a GitHub Release):
 
 | Image | Tags |
 | --- | --- |
-| `ghcr.io/<owner>/birdroms-backend` | `latest`, `sha-<7 chars>` (each push to main); `X.Y.Z` and `latest` (tags) |
+| `ghcr.io/<owner>/birdroms-backend` | `latest`, `sha-<7 chars>` (each push to main); `YYYY.MM.DD[.N]` and `latest` (tags) |
 | `ghcr.io/<owner>/birdroms-web` | same |
 
 `<owner>` is the GitHub account or organisation that owns the repository (`amtypaldos` for the
@@ -38,7 +38,7 @@ BIRDROMS_WEB_IMAGE=ghcr.io/<owner>/birdroms-web:latest
 If you publish your own images from a private fork, the packages are private too: on the Docker host
 run `docker login ghcr.io` with a token that has `read:packages`.
 
-Pin `sha-...` or `X.Y.Z` tags instead of `latest` if you want rollbacks to be one edit.
+Pin `sha-...` or `YYYY.MM.DD` tags instead of `latest` if you want rollbacks to be one edit.
 Without a registry, `docker compose -f docker-compose.prod.yml up -d --build` builds from a
 checkout, and `docker save | ssh host docker load` moves images between machines.
 
@@ -247,6 +247,6 @@ docker compose -f docker-compose.prod.yml up -d                                 
 docker compose -f docker-compose.prod.yml ps                                          # 5. healthy?
 ```
 
-To roll back, set the image variables to the previous `sha-...`/`X.Y.Z` tag and run `up -d`
+To roll back, set the image variables to the previous `sha-...`/`YYYY.MM.DD` tag and run `up -d`
 again. If the new version applied database migrations the old one cannot read, restore
 `pre-update.dump` after rolling the images back.
