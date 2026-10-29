@@ -1,152 +1,148 @@
 # birdROMs
 
-`birdROMs` is a Django + React web app for private retro ROM sharing and management with role-based access, extension-based ROM classification, and cover art scraping support.
+[![CI](https://github.com/amtypaldos/birdROMs/actions/workflows/ci.yml/badge.svg)](https://github.com/amtypaldos/birdROMs/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## Self-hosting / Open source
+**birdROMs is a self-hosted place to keep your retro game library and share it with a small group of friends.**
+Point it at a folder (or S3 bucket) of ROMs laid out the way muOS handheld firmware expects, and your
+friends can browse it with cover art in the browser or on a handheld, and download what they want.
+Everything runs on your own hardware; there is no central service.
 
-birdROMs is free and open-source software. There is no central service: anyone can run
-their own private instance for themselves and a trusted group. Every deployment-specific
-value (database, secret key, allowed hosts, auth and storage settings) is configured
-through environment variables documented in `backend/.env.example` — no secrets live in
-this repository. Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+It is a Django + React web app with an optional on-device client for muOS handhelds
+([birdroms-handheld](https://github.com/amtypaldos/birdroms-handheld)).
 
-**Recommended: deploy with Docker. [SELF_HOSTING.md](SELF_HOSTING.md)** is the step-by-step
-guide. It covers configuration, HTTPS, SSO (Pocket ID), S3/MinIO or NFS storage, the first
-`super_admin`, and backups.
+<!-- TODO: add screenshots here (library grid, playlist, Handheld page). Put the images under docs/images/. -->
 
-## Core Features
+> **ROMs and copyright.** birdROMs does not include, ship or distribute any ROMs, BIOS files or
+> other copyrighted game content. It is a tool for managing files you already have. You are
+> responsible for only storing and sharing content you have the right to use and share (for example
+> homebrew, your own dumps where that is lawful where you live, or content you are licensed to
+> distribute). The project and its contributors accept no responsibility for what you host.
 
-- Upload and manage ROM files in a shared library
-- Role-based auth:
-  - `super_admin`: full upload/manage access
-  - `readonly`: browse metadata and download ROMs
-- ROM platform classification from file extension (`.nes`, `.sfc`, `.gba`, etc.)
-- Automatic cover art download on upload (libretro-thumbnails, ScreenScraper), stored with the ROMs
-- PostgreSQL as the primary database
-- REST API backend (Django REST Framework) + React frontend
+## Features
 
-## Tech Stack
+- **Library you already have.** Reads a muOS-style tree (`ROMS/<SYSTEM>/<game file>`, box art in
+  `ROMS/<SYSTEM>/Imgs/`) from a folder, an NFS share or an S3-compatible bucket, in place. A scan runs
+  every 15 minutes and indexes what it finds. birdROMs never deletes, moves, renames or overwrites
+  files in your library.
+- **Uploads.** Signed-in users can upload ROMs from the browser; files are written into the library
+  under the right system folder (`ROMS/SFC/...`) and keep their original file name.
+- **Clean titles, original file names.** Names like `Super Mario World (USA) [!].sfc` are shown as a
+  clean title with region/dump tags, but downloads always keep the original file name, so saves,
+  save states and box art on your devices stay linked to the game.
+- **Platform detection** from folder names and file extensions (dozens of systems).
+- **Cover art.** Uses the box art already in your library, and scrapes missing art from
+  libretro-thumbnails and ScreenScraper in the background.
+- **Playlists** to group games for friends.
+- **Sign-in** with local accounts, single sign-on (OIDC: Pocket ID, Authentik, Keycloak, Authelia,
+  Google, ...), or both.
+- **Handheld client.** A muOS app that pairs with a QR code and downloads playlists and platforms
+  straight onto the device. The server hosts the app package for friends to download.
+- **Installable web app (PWA)** (needs HTTPS).
+- **Private by default.** Nothing is public: every download goes through a permission-checked API,
+  even when the files sit in S3.
 
-- Backend: Django, Django REST Framework, PostgreSQL
-- Frontend: React + Vite
-- Auth: Django auth + token-based API auth; local login and/or OIDC SSO (Authlib)
-- Storage: local/NFS filesystem by default (`MEDIA_ROOT`), or any S3-compatible object store (`STORAGE_BACKEND=s3`)
+Out of scope: online play, netplay and save-state sync. (To sync saves across your own devices, use
+something like Syncthing.)
 
-## Project Structure
+## Quick start (Docker)
 
-- `backend/`: Django API server
-- `frontend/`: React client
-
-## Quick Start
-
-### Production (Docker, recommended)
+You need Docker Engine 24+ with Compose v2.24+, and a few GB of disk for your library.
 
 ```bash
-cp backend/.env.example backend/.env    # set DJANGO_SECRET_KEY, DJANGO_DEBUG=False, hosts, DB password
-docker compose -f docker-compose.prod.yml up -d --build
+git clone https://github.com/amtypaldos/birdROMs.git && cd birdROMs
+cp backend/.env.example backend/.env
+# edit backend/.env: DJANGO_SECRET_KEY, DJANGO_DEBUG=False, DJANGO_ALLOWED_HOSTS,
+# DJANGO_CSRF_TRUSTED_ORIGINS and POSTGRES_PASSWORD at least (see SELF_HOSTING.md)
+
+# Use the prebuilt multi-arch images (amd64 + arm64) ...
+export BIRDROMS_BACKEND_IMAGE=ghcr.io/amtypaldos/birdroms-backend:latest
+export BIRDROMS_WEB_IMAGE=ghcr.io/amtypaldos/birdroms-web:latest
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+# ... or build them yourself: docker compose -f docker-compose.prod.yml up -d --build
+
 docker compose -f docker-compose.prod.yml exec backend python manage.py createsuperuser
 ```
 
-birdROMs is then on `http://<host>:8080`. The stack is PostgreSQL, gunicorn, and nginx serving
-the UI and proxying the API. Read [SELF_HOSTING.md](SELF_HOSTING.md) before exposing it.
+birdROMs is now on `http://<host>:8080`. Sign in with that account (a Django superuser is a
+`super_admin`). The stack is PostgreSQL, Redis, gunicorn, a background worker (library scans and
+cover-art scraping) and nginx serving the UI. By default the library is an empty Docker volume:
+upload ROMs in the web UI, or point birdROMs at an existing library (a host folder, an NFS share, or
+S3) as described in [docs/deploying.md](docs/deploying.md#3-the-library).
 
-### Development (Docker)
+**Read [SELF_HOSTING.md](SELF_HOSTING.md) before exposing it to the internet.**
 
-You only need Docker:
+## Documentation
 
-```bash
-docker compose up --build
-```
-
-This starts PostgreSQL, the Django dev server at <http://localhost:8000> and the Vite dev
-server at <http://localhost:5173>, with hot reload from `./backend` and `./frontend/src`.
-`backend/.env` is optional here. Create an admin with
-`docker compose exec backend python manage.py createsuperuser`. If port 5432 is already taken,
-use `BIRDROMS_DB_PORT=15432 docker compose up`.
-
-### Development (native, no Docker)
-
-Local development is fully native; Docker is only for production and self-hosting. You need
-[uv](https://docs.astral.sh/uv/), Node.js with corepack (`corepack enable`), a local
-PostgreSQL server, and [just](https://github.com/casey/just). The `justfile` wraps the common
-commands:
-
-| Recipe | What it does |
+| Doc | What it covers |
 | --- | --- |
-| `just db-init` | Create the `birdroms` role and database in local Postgres (safe to re-run) |
-| `just migrate` | Apply Django migrations |
-| `just backend` | Django dev server on <http://localhost:8000> |
-| `just frontend` | Vite dev server on <http://localhost:5173> |
-| `just test` | Backend (`manage.py test`) and frontend (`yarn test`) tests |
-| `just lint` | Frontend ESLint |
+| [SELF_HOSTING.md](SELF_HOSTING.md) | Step-by-step setup: configuration, HTTPS, single sign-on, storage, backups, troubleshooting |
+| [docs/deploying.md](docs/deploying.md) | Production runbook: prebuilt images, NFS/S3 library, reverse proxy, first scan, updates and rollback |
+| [docs/upgrading-to-the-library.md](docs/upgrading-to-the-library.md) | Upgrading from the older upload-only storage to the ROM library |
+| [docs/handheld-app.md](docs/handheld-app.md) | Publishing the muOS handheld app so friends can download it from your server |
+| [backend/.env.example](backend/.env.example) | Every setting, with comments |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, tests, pull request expectations |
+| [SECURITY.md](SECURITY.md) | How to report a vulnerability |
 
-First run: `just db-init && just migrate`, then `just backend` and `just frontend` in two
-terminals. Or run the steps by hand, pointing `POSTGRES_*` at your own database if needed.
+The rest of this README is the reference for sign-in, ROM handling and the API.
 
-Backend (uv):
+## The handheld app
 
-```bash
-cd backend
-uv sync
-cp .env.example .env
-uv run python manage.py migrate
-uv run python manage.py createsuperuser
-uv run python manage.py runserver
-```
+The muOS client lives in its own repository, [birdroms-handheld](https://github.com/amtypaldos/birdroms-handheld).
+Build it there (`just package`) or take `birdROMs.muxapp` from its GitHub Releases, then publish it on your
+server with `python manage.py publish_handheld` ([docs/handheld-app.md](docs/handheld-app.md)). Signed-in
+users get a **Handheld** page with install steps and a download that already knows your server's address.
+On the device, pair with the QR code, pick playlists or platforms and press Start to download. Device
+tokens are read-only and can be revoked.
 
-Frontend (Yarn, via `corepack enable`):
+## Development
 
-```bash
-cd frontend
-yarn install
-yarn dev
-```
-
-The Vite dev server proxies `/api` to `http://localhost:8000` (override with
-`VITE_PROXY_TARGET`).
-
-## Testing
-
-Backend tests run against PostgreSQL (Django creates and drops a `test_<POSTGRES_DB>`
-database; `just db-init` sets up the role) and a temporary media directory, so no `.env` is
-needed:
+Contributors can run the whole stack with Docker or run everything natively. Full instructions,
+including tests and lint, are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
-cd backend
-uv run python manage.py test
+docker compose up --build        # Postgres + Django (runserver) + Vite, hot reload
+# Django API on http://localhost:8000, UI on http://localhost:5173
+docker compose exec backend python manage.py createsuperuser
 ```
 
-Frontend lint and tests (ESLint + Vitest/React Testing Library on jsdom, no backend needed):
+The dev stack mounts `./library` (override with `LIBRARY_PATH`) as the ROM library; create the folder first.
 
-```bash
-cd frontend
-yarn lint
-yarn test
-```
+## Tech stack
+
+- Backend: Django 5, Django REST Framework, PostgreSQL, [Huey](https://huey.readthedocs.io/) + Redis for background tasks
+- Frontend: React 18 + Vite 5
+- Auth: Django auth with token-based API auth; local login and/or OIDC SSO ([Authlib](https://docs.authlib.org/))
+- Storage: local/NFS filesystem or any S3-compatible object store
+- Images: Docker, published to GHCR for linux/amd64 and linux/arm64
+
+Project layout: `backend/` (Django API), `frontend/` (React client), `docs/`, `scripts/`.
 
 ### Continuous integration
 
-GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every push
-and pull request:
+GitHub Actions ([`ci.yml`](.github/workflows/ci.yml)) runs on every push and pull request:
 
-- **Backend** — `uv sync --locked` then `uv run python manage.py test` (Python 3.12, against a
-  Postgres service container).
-- **Frontend** — `yarn install --immutable`, `yarn lint`, `yarn test`, `yarn build` (Node 22,
-  Yarn via corepack).
-- **Docker** — builds the production `backend` and `frontend` images (`--target prod`) to
-  catch Dockerfile breakage.
+- **Backend**: `uv sync --locked`, `uv run python manage.py test` (Python 3.12, Postgres service container).
+- **Frontend**: `yarn install --immutable`, `yarn lint`, `yarn test`, `yarn build` (Node 24, Yarn via corepack).
+- **Docker**: builds both production images for `linux/amd64` and `linux/arm64` (the latter under QEMU),
+  checks the `PUID`/`PGID` behaviour of the backend image and validates the compose files.
 
-Run the same commands locally before opening a PR.
+[`docker-publish.yml`](.github/workflows/docker-publish.yml) publishes the images to GHCR on pushes to
+`main` (`latest`, `sha-<7>`) and on date tags `vYYYY.MM.DD` (`YYYY.MM.DD`, `latest`; `vYYYY.MM.DD.N` for another release the same day), and creates a GitHub Release for tags.
 
 ## Auth and Roles
 
 Roles are implemented as user groups:
 
-- `super_admin`: create/edit/delete ROMs, upload files, scrape cover art
-- `readonly`: list ROMs and download files
+- `super_admin`: everything below, plus editing and deleting ROM entries, re-scraping cover art and
+  administering the library (status, rescans, accepting removals)
+- `readonly`: list ROMs, download files, use playlists and pair a handheld
 
-Uploading a ROM is currently open to any authenticated user (RBAC is deferred; see
-`backend/apps/roms/permissions.py` to re-tighten). Editing, deleting and re-scraping stay `super_admin`-only.
+For a trusted friend group, uploading a ROM and creating playlists are open to every signed-in
+user. Fine-grained roles are not implemented yet; see `backend/apps/roms/permissions.py` to
+tighten uploads. Only a playlist's creator can change it. Deleting a ROM entry removes it from
+birdROMs only, never the file from your library.
 
 Use Django admin to assign roles to local users. SSO users get their role from the provider
 (see below).
@@ -217,14 +213,18 @@ Every variable is documented in `backend/.env.example`. SAML is not supported.
 
 ## ROM Classification
 
-ROM classification is determined server-side from the file's final extension
+Uploads are classified server-side from the file's final extension
 (case-insensitive, so `Super.Mario.World.SFC` is SNES). If an upload leaves `platform` blank it
-is filled in automatically; if `platform` is provided — on upload or later via `PATCH` — that
+is filled in automatically; if `platform` is provided (on upload or later via `PATCH`) that
 value is kept as-is, so ambiguous files can be corrected manually. Unrecognized extensions are
 tagged as `unknown`.
 
 The canonical map is `EXTENSION_TO_PLATFORM` in `backend/apps/roms/services.py`
-(`SUPPORTED_EXTENSIONS` and `SUPPORTED_PLATFORMS` are derived from it).
+(`SUPPORTED_EXTENSIONS` and `SUPPORTED_PLATFORMS` are derived from it). When a library scan finds a
+game, the platform comes from the system folder it sits in (`ROMS/SFC/` is SNES; the folder and alias
+table is `backend/apps/roms/data/platform_aliases.csv`), and the extension decides inside shared
+folders. Uploads without a platform are classified by extension and written to the matching muOS
+system folder; unknown platforms go to `ROMS/_UNSORTED`.
 
 | Platform | Extensions |
 | --- | --- |
@@ -263,26 +263,42 @@ PlayStation 2`) when uploading them.
 
 ## Upload Validation
 
-Uploads are treated as untrusted. `POST /api/roms/` returns `400` with an error on the `file`
-field when:
+Uploads are treated as untrusted. `POST /api/roms/` writes the file into the library (see below) and
+returns `400` with an error on the `file` field when:
 
 - the extension (checked case-insensitively) is not in the table above. That table is the
   complete allowlist and includes `.zip`/`.7z` archives. Files with no extension are rejected too.
 - the file is empty (0 bytes).
 - the file is larger than `MAX_ROM_UPLOAD_BYTES`, which defaults to `2147483648` (2 GiB) and can
   be set in the environment. If a reverse proxy sits in front of the app, raise its body-size
-  limit to match.
+  limit to match (with the bundled nginx, `NGINX_CLIENT_MAX_BODY_SIZE`).
+- a file with the same name is already in that system folder (uploads never overwrite), or the
+  library is read-only (`LIBRARY_READ_ONLY=true`) or unreachable.
 
-## File Storage
+## Library and file storage
 
-ROM files and cover art go to Django's default storage. You choose the backend with
-`STORAGE_BACKEND`, so switching needs no code changes:
+**The ROM library** is where games live. It is a muOS-layout tree, `ROMS/<SYSTEM>/<file>` with box
+art in `ROMS/<SYSTEM>/Imgs/<name>.png`, on one of:
 
-- `filesystem` (default): files live under `MEDIA_ROOT`, which defaults to `backend/media`. For
-  NFS, mount the share and set `MEDIA_ROOT` to the mount path.
-- `s3`: any S3-compatible store (AWS S3, MinIO, Cloudflare R2, Backblaze B2), configured with
-  `S3_BUCKET_NAME`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_ENDPOINT_URL`, `S3_REGION`,
-  `S3_CUSTOM_DOMAIN`, `S3_PATH_STYLE` (MinIO usually needs `True`), `S3_LOCATION` and
+- `filesystem` (default): the folder `LIBRARY_ROOT` (`/library` in Docker; an NFS mount works
+  like any folder);
+- `s3`: an S3-compatible bucket (AWS S3, MinIO, Cloudflare R2, Backblaze B2), optionally under
+  `LIBRARY_S3_PREFIX`.
+
+`LIBRARY_BACKEND` picks one and defaults to the value of `STORAGE_BACKEND`. A scan runs every 15 minutes
+(`LIBRARY_SCAN_CRONTAB`, needs the worker), or on demand with `python manage.py scan_library` or the
+**Library** page for `super_admin`s. A scan adds new files, updates changed ones and marks vanished files
+as missing (hidden, not deleted). If a scan would hide more than 25% of the known ROMs it aborts, so an
+unmounted share can't empty your library; see [docs/deploying.md](docs/deploying.md#first-scan).
+Uploads are written into the library; scraped cover art is saved next to the ROMs unless
+`LIBRARY_WRITE_COVERS=False`. Set `LIBRARY_READ_ONLY=true` and birdROMs never writes there at all.
+
+**Media storage** (`MEDIA_ROOT`, or the same S3 bucket) holds the rest: scraped cover art and the
+published handheld package. Choose it with `STORAGE_BACKEND`:
+
+- `filesystem` (default): files live under `MEDIA_ROOT`, which defaults to `backend/media`.
+- `s3`: configured with `S3_BUCKET_NAME`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_ENDPOINT_URL`,
+  `S3_REGION`, `S3_CUSTOM_DOMAIN`, `S3_PATH_STYLE` (MinIO usually needs `True`), `S3_LOCATION` and
   `S3_QUERYSTRING_AUTH`. Objects are never made public, and file URLs are signed by default.
 
 Every variable is documented in `backend/.env.example`.
@@ -293,7 +309,7 @@ Every variable is documented in `backend/.env.example`.
 by default. Use `?page=N` to move between pages and `?page_size=N` to change the size (max 100).
 A page past the end returns 404. Filters:
 
-- `?search=zelda` matches part of the title, ignoring case.
+- `?search=zelda` matches part of the title or the original file name, ignoring case.
 - `?platform=NES` matches the platform exactly (use the names from the platform table).
 
 You can combine filters and pagination, for example `?search=zelda&platform=Game+Boy+Advance&page=2`.
@@ -302,21 +318,24 @@ uses it for the platform dropdown. Both endpoints need a `readonly` or `super_ad
 
 ## Downloads
 
-ROMs are private. Django never serves `MEDIA_ROOT` directly, and the API does not return a
-storage URL for the file. Downloads go through `GET /api/roms/{id}/download/`, which needs an
-authenticated `readonly` or `super_admin` user and returns the file as an attachment
-(`Content-Disposition: attachment; filename="<title><ext>"`). Unknown ids return 404. This works
-the same way with both storage backends. birdROMs streams the file from storage through the app
-and never redirects to a pre-signed S3 URL, so clients never get a direct storage URL. Each ROM
-in the API lists this endpoint as `download_url`. The web UI fetches it with the user's token
-and saves the response as a blob.
+ROMs are private. Django never serves `MEDIA_ROOT` or the library directly, and the API does not return a
+storage URL for the file. Downloads go through `GET /api/roms/{id}/download/`, which needs a signed-in
+`readonly` or `super_admin` user (or a paired device token) and returns the file as an attachment whose
+`Content-Disposition` filename is the **original file name** (for example `Super Mario World (USA).sfc`),
+not the cleaned-up title: muOS and RetroArch key saves, states and box art to the ROM's file name.
+Unknown ids return 404. This works the same way with both storage backends: birdROMs streams the file
+from storage through the app and never redirects to a pre-signed S3 URL, so clients never get a direct
+storage URL. Each ROM in the API lists this endpoint as `download_url`. The web UI fetches it with the
+user's token and saves the response as a blob.
 
 ## Cover Art Scraping
 
-When a ROM is uploaded, birdROMs looks up cover art right away and saves the image to the
-configured storage (filesystem or S3, under `covers/`). It is a real stored file, not a link to
-the provider, so the library keeps working offline. `cover_art_source` records which provider
-supplied the image.
+Games whose library folder already has box art (`ROMS/<SYSTEM>/Imgs/<name>.png`) use it. For the rest,
+a background task (queued on upload and found again by an hourly sweep, so it needs the `worker`) looks
+up cover art and saves the image to the media storage under `covers/`, and also next to the ROM in the
+library's `Imgs/` folder when the library is writable (`LIBRARY_WRITE_COVERS`), where muOS devices
+find it too. It is a real stored file, not a link to the provider, so the library keeps working offline. `cover_art_source` records which
+provider supplied the image.
 
 Providers are tried in the order set by `COVER_ART_PROVIDERS` until one returns an image:
 
@@ -326,7 +345,7 @@ Providers are tried in the order set by `COVER_ART_PROVIDERS` until one returns 
 | `screenscraper` | `SS_DEV_ID`, `SS_DEV_PASSWORD` (+ optional `SS_USER`, `SS_PASSWORD`) | Queries [ScreenScraper](https://www.screenscraper.fr/) by file name and system and picks the 2D box art (then title screen or screenshot). It is skipped when no developer credentials are set. |
 
 Every HTTP call uses the `COVER_ART_TIMEOUT` (seconds, default 10). Only image responses up to
-10 MB are accepted. Scraping never fails an upload: provider errors are logged and the ROM is
+10 MB are accepted. Scraping never fails an upload or a scan: provider errors are logged and the ROM is
 saved without art. Set `COVER_ART_PROVIDERS=` (empty) to turn scraping off.
 
 - `POST /api/roms/{id}/scrape_cover/` (super_admin) re-scrapes and replaces the art. It returns
@@ -338,7 +357,10 @@ saved without art. Set `COVER_ART_PROVIDERS=` (empty) to turn scraping off.
 
 ## License
 
-birdROMs is released under the [MIT License](LICENSE).
+birdROMs is released under the [MIT License](LICENSE). The bundled web fonts (Chakra Petch and
+Press Start 2P) are under the SIL Open Font License 1.1; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+for third-party licenses.
 
-birdROMs does not ship or distribute any ROMs. You are responsible for ensuring that any
-files you upload to your instance are ones you have the right to use and share.
+birdROMs does not ship or distribute any ROMs, BIOS files or copyrighted game content. You are
+responsible for making sure that anything you add to your instance is content you have the right to
+use and share. See also [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) and [SECURITY.md](SECURITY.md).

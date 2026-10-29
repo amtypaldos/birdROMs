@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/amtypaldos/birdROMs/security/advisories/new
+    about: Report security problems privately, not as a public issue.
+  - name: Handheld app (muOS client)
+    url: https://github.com/amtypaldos/birdroms-handheld/issues
+    about: Issues with the on-device app belong in the birdroms-handheld repository.

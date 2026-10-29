@@ -1,0 +1,43 @@
+name: Bug report
+description: Something in the birdROMs server or web UI does not work
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: And what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Image tag (for example `0.3.0` or `sha-1a2b3c4`) or git commit.
+    validations:
+      required: true
+  - type: dropdown
+    id: deploy
+    attributes:
+      label: How are you running it?
+      options:
+        - Docker (prebuilt images)
+        - Docker (built from source)
+        - Native (uv / yarn)
+    validations:
+      required: true
+  - type: input
+    id: config
+    attributes:
+      label: Library and auth setup
+      description: "For example: NFS library, AUTH_METHODS=oidc, STORAGE_BACKEND=s3. No secrets."
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant `docker compose logs` output. Remove secrets, tokens and private host names first.
+      render: text

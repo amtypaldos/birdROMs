@@ -1,8 +1,8 @@
 # Deploying birdROMs
 
 A production runbook for any Docker host. It covers prebuilt images, an NFS or S3 library, a
-reverse proxy in front, first-run steps, backups, updates and rollback. For the basics and the
-meaning of every setting, see [SELF_HOSTING.md](../SELF_HOSTING.md) and
+reverse proxy in front, first-run steps, backups, updates and rollback. New to birdROMs? Start with
+the walk-through in [SELF_HOSTING.md](../SELF_HOSTING.md); every setting is explained in
 [`backend/.env.example`](../backend/.env.example).
 
 ## What runs
@@ -19,22 +19,26 @@ ROMs (`LIBRARY_WRITE_COVERS`). birdROMs never deletes, moves or renames files in
 ## 1. Images
 
 The GitHub Actions workflow [`docker-publish.yml`](../.github/workflows/docker-publish.yml)
-publishes two linux/amd64 images to GHCR on every push to `main` and on `vX.Y.Z` tags:
+publishes two multi-arch images (linux/amd64 and linux/arm64, so a Raspberry Pi or an ARM NAS works)
+to GHCR on every push to `main` and on date tags `vYYYY.MM.DD` (or `vYYYY.MM.DD.N`) (a tag also creates a GitHub Release):
 
 | Image | Tags |
 | --- | --- |
-| `ghcr.io/<owner>/birdroms-backend` | `latest`, `sha-<7 chars>` (each push to main); `X.Y.Z` and `latest` (tags) |
+| `ghcr.io/<owner>/birdroms-backend` | `latest`, `sha-<7 chars>` (each push to main); `YYYY.MM.DD[.N]` and `latest` (tags) |
 | `ghcr.io/<owner>/birdroms-web` | same |
 
-Packages of a private repo are private: on the Docker host run `docker login ghcr.io` with a
-token that has `read:packages`. Point the compose file at them (shell or repo-root `.env`):
+`<owner>` is the GitHub account or organisation that owns the repository (`amtypaldos` for the
+upstream project). Point the compose file at the images (shell or repo-root `.env`):
 
 ```env
 BIRDROMS_BACKEND_IMAGE=ghcr.io/<owner>/birdroms-backend:latest
 BIRDROMS_WEB_IMAGE=ghcr.io/<owner>/birdroms-web:latest
 ```
 
-Pin `sha-...` or `X.Y.Z` tags instead of `latest` if you want rollbacks to be one edit.
+If you publish your own images from a private fork, the packages are private too: on the Docker host
+run `docker login ghcr.io` with a token that has `read:packages`.
+
+Pin `sha-...` or `YYYY.MM.DD` tags instead of `latest` if you want rollbacks to be one edit.
 Without a registry, `docker compose -f docker-compose.prod.yml up -d --build` builds from a
 checkout, and `docker save | ssh host docker load` moves images between machines.
 
@@ -65,7 +69,7 @@ inside that container.
 Add [`docker-compose.nfs.yml`](../docker-compose.nfs.yml):
 
 ```bash
-export BIRDROMS_NFS_ADDR=192.168.1.20 BIRDROMS_NFS_EXPORT=/srv/roms   # or put these in .env
+export BIRDROMS_NFS_ADDR=192.0.2.20 BIRDROMS_NFS_EXPORT=/srv/roms   # or put these in .env
 docker compose -f docker-compose.prod.yml -f docker-compose.nfs.yml up -d
 ```
 
@@ -90,7 +94,7 @@ If it is not writable, either change the export (squash all clients to uid/gid 5
 `all_squash,anonuid=568,anongid=568`), `chown`/`chmod` the folders on the server, or run read-only
 with `LIBRARY_READ_ONLY=true` (uploads and cover write-back are then off). A stale-mount NAS
 outage cannot make birdROMs mark everything missing: a scan that would hide more than 25% of the
-known ROMs aborts (see [Scans](#5-first-scan)).
+known ROMs aborts (see [Scans](#first-scan)).
 
 ### S3
 
@@ -98,10 +102,13 @@ Set `STORAGE_BACKEND=s3` and the `S3_*` variables (see `.env.example`), and
 `LIBRARY_S3_PREFIX` to keep the library apart from other bucket content. No NFS file is needed.
 See [upgrading-to-the-library.md](upgrading-to-the-library.md).
 
-### Local volume
+### Local volume or a host folder
 
 The default `birdroms_library` volume works without any override; put ROMs in it with the upload
-page or by copying into the volume.
+page or by copying into the volume. To use an existing folder on the host instead, replace
+`birdroms_library:/library` in `docker-compose.prod.yml` with a bind mount (for example
+`/srv/roms:/library`) and give it to the app user (`chown -R 568:568 /srv/roms`, or set `PUID`/`PGID`
+to the folder's owner).
 
 ## 4. Reverse proxy and TLS
 
@@ -204,12 +211,29 @@ many new PNGs in the library's `Imgs/` folders. Set `LIBRARY_WRITE_COVERS=False`
     sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' > birdroms-$(date +%F).dump
   ```
 
-  Run it nightly from cron and keep a few weeks. Restore:
-  `pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists < file.dump` inside the
-  postgres container, with the backend and worker stopped.
+  Run it nightly from cron and keep a few weeks. Restore into a stopped stack (backend and worker
+  not running):
+
+  ```bash
+  docker compose -f docker-compose.prod.yml up -d postgres
+  docker compose -f docker-compose.prod.yml exec -T postgres \
+    sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < birdroms-YYYY-MM-DD.dump
+  docker compose -f docker-compose.prod.yml up -d
+  ```
 - **The library** is your ROMs; back it up with the storage system it lives on (NAS snapshots,
   bucket versioning). birdROMs does not need a copy: a lost database is rebuilt by rescanning,
   except users, playlists and device pairings.
+- **The media volume** (`birdroms_media`: scraped cover art, the published handheld package) is
+  recreated by the hourly cover sweep and by `publish_handheld`, but backing it up is cheap:
+
+  ```bash
+  docker run --rm -v <project>_birdroms_media:/data:ro -v "$PWD":/backup alpine \
+    tar czf /backup/birdroms-media-$(date +%F).tar.gz -C /data .
+  ```
+
+  The volume name is `<project>_birdroms_media`; the project defaults to the directory name, so
+  check `docker volume ls`. After restoring one, give the files back to the app user
+  (`chown -R 568:568 /data`, or your `PUID:PGID`).
 - **The env file** holds your secrets; keep a copy somewhere private.
 
 ## 9. Updating and rolling back
@@ -223,6 +247,6 @@ docker compose -f docker-compose.prod.yml up -d                                 
 docker compose -f docker-compose.prod.yml ps                                          # 5. healthy?
 ```
 
-To roll back, set the image variables to the previous `sha-...`/`X.Y.Z` tag and run `up -d`
+To roll back, set the image variables to the previous `sha-...`/`YYYY.MM.DD` tag and run `up -d`
 again. If the new version applied database migrations the old one cannot read, restore
 `pre-update.dump` after rolling the images back.
