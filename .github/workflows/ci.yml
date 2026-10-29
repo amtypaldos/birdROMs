@@ -97,7 +97,7 @@ jobs:
       - uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Build backend image
         run: docker buildx build --platform "$PLATFORM" --load --target prod -t birdroms-backend:ci backend
       - name: Backend runs as 568:568 by default, as PUID/PGID, or as compose `user:`
