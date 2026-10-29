@@ -7,7 +7,9 @@
 ARG NODE_VERSION=22
 
 # --- deps: install with the Yarn version pinned in package.json (via corepack) ---
-FROM node:${NODE_VERSION}-alpine AS deps
+# Runs on the builder's own architecture: the bundle is plain JS/CSS, so a multi-arch image build
+# (docker-publish.yml) does not need to emulate Node under QEMU.
+FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-alpine AS deps
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     YARN_ENABLE_GLOBAL_CACHE=false \
     YARN_ENABLE_TELEMETRY=0
