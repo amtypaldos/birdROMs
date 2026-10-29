@@ -200,7 +200,7 @@ export const api = {
       } catch {
         // not a JSON body; keep the raw text
       }
-      throw new Error(message);
+      throw new Error(message, { cause: err });
     }
   },
   // Returns DRF's paginated envelope: { count, next, previous, results }.

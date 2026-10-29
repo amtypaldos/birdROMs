@@ -234,7 +234,7 @@ just test                                     # backend and frontend tests
 ```
 
 Stack: Django 5, Django REST Framework, PostgreSQL, Huey + Redis for background tasks (immediate mode in
-dev), React 18 + Vite 5, Authlib for OIDC. Layout: `backend/`, `frontend/`, `docs/`, `scripts/`.
+dev), React 19 + Vite 8, Authlib for OIDC. Layout: `backend/`, `frontend/`, `docs/`, `scripts/`.
 GitHub Actions run backend tests, frontend lint/test/build and Docker builds on every push and pull
 request.
 
