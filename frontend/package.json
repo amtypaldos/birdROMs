@@ -23,7 +23,7 @@
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@vitejs/plugin-react": "^4.3.1",
-    "eslint": "^9",
+    "eslint": "^10",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5",
     "globals": "^17.13.0",
