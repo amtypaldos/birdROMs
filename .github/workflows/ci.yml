@@ -63,7 +63,7 @@ jobs:
       COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           # Node 24 matches the project's dev toolchain (mise) and avoids a
           # jsdom/vitest VM module-linking failure (ERR_VM_MODULE_LINK_FAILURE)
