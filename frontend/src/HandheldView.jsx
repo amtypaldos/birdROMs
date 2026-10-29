@@ -109,8 +109,8 @@ export default function HandheldView() {
       </ol>
       <h3>Updating</h3>
       <p>
-        Download the new version here, copy it into <code>ARCHIVE</code> again (replace the old file), and run steps 3 and 4
-        again. You stay linked to your account.
+        The handheld updates itself from this site. The next time you open <em>birdROMs</em> it downloads the new version,
+        then restarts. You stay linked to your account, so there is nothing to copy again.
       </p>
     </section>
   );
