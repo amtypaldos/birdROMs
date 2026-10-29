@@ -8,6 +8,8 @@ games with cover art, upload ROMs and download them. An optional muOS handheld a
 ([birdroms-handheld](https://github.com/amtypaldos/birdroms-handheld)) does the same from the device.
 Everything runs on your hardware; there is no central service.
 
+![The birdROMs sign-in page](docs/images/login.png)
+
 Out of scope: online play, netplay and online save-state sync. (To sync saves between your own devices,
 use something like Syncthing.)
 
@@ -31,6 +33,8 @@ use something like Syncthing.)
   needs HTTPS).
 - **Private.** Every download goes through a permission-checked API that streams the file, even from S3.
   There is no public URL for a ROM or its cover.
+
+![The library grid: cover art, clean titles, platform tags and a download button per game](docs/images/library.png)
 
 ## Quick start (Docker)
 
@@ -87,6 +91,8 @@ Two roles, stored as Django groups:
 Uploading and creating playlists are open to every signed-in user, and only a playlist's creator can
 change it. Roles beyond these two are not built. Assign roles to local users in Django admin; SSO users get
 theirs from the provider.
+
+![A playlist: ROMs in order, with reorder and remove buttons](docs/images/playlists.png)
 
 ### Login methods
 
@@ -202,6 +208,8 @@ server stores `birdROMs.muxapp`; signed-in users get a **Handheld** page with in
 that adds `server.json` with this server's address. On the device, pair by scanning the QR code with your
 phone, or type the short code shown on the device into the Handheld page. Then pick playlists or
 platforms and press Start. Device tokens are read-only and revocable.
+
+![The Handheld page: install steps and a box for the pairing code](docs/images/handheld.png)
 
 A paired device updates itself from the package published on your server, not from GitHub. The backend
 image build downloads `birdROMs.muxapp` from the `amtypaldos/birdroms-handheld` release with the same tag
