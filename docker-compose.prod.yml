@@ -29,15 +29,17 @@ x-backend-common: &backend-common
     MEDIA_ROOT: /data/media
     # Existing ROM library, scanned in place (mounted below).
     LIBRARY_ROOT: /library
-    # Background tasks (cover-art scraping) go through this Redis; the worker consumes them.
+    # Background tasks (library scans, cover-art scraping) go through this Redis; the worker
+    # consumes them.
     REDIS_URL: redis://redis:6379/0
   volumes:
-    # Filesystem storage. To use NFS, replace this with a bind mount of the NFS share
-    # (e.g. /mnt/roms:/data/media) or an NFS-backed named volume.
+    # Media storage: scraped cover art and the published handheld package. (Your ROMs are in the
+    # library volume below, not here.)
     - birdroms_media:/data/media
-    # The ROM library, shared so the worker's scheduled scans see what the backend sees. The
-    # app user (uid 568) needs write access: on NFS set the export's ownership accordingly, or
-    # set LIBRARY_READ_ONLY=true. Upgrading? See docs/upgrading-to-the-library.md.
+    # The ROM library, shared so the worker's scheduled scans see what the backend sees. To use an
+    # existing host folder, replace this with a bind mount (e.g. /srv/roms:/library). The app user
+    # (PUID:PGID, default 568:568) needs write access: on NFS set the export's ownership
+    # accordingly, or set LIBRARY_READ_ONLY=true. Upgrading? See docs/upgrading-to-the-library.md.
     - birdroms_library:/library
 
 services:

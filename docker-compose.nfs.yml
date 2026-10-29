@@ -3,7 +3,7 @@
 #   docker compose -f docker-compose.prod.yml -f docker-compose.nfs.yml up -d
 #
 # Set these in the shell or the repo-root .env (all required):
-#   BIRDROMS_NFS_ADDR     address of the NFS server, e.g. 192.168.1.20
+#   BIRDROMS_NFS_ADDR     address of the NFS server, e.g. 192.0.2.20
 #   BIRDROMS_NFS_EXPORT   exported path that holds (or contains) the ROMS/ folder, e.g. /srv/roms
 # Optional:
 #   BIRDROMS_NFS_OPTS     extra mount options. Default: rw,nfsvers=4.1,hard,noatime
