@@ -30,7 +30,7 @@ COPY . .
 RUN yarn build
 
 # --- prod: nginx serving the SPA and proxying /api, /admin and /static to the backend ---
-FROM nginx:1.27-alpine AS prod
+FROM nginx:1.29-alpine AS prod
 # Defaults for the nginx config template; override at runtime via env.
 ENV BACKEND_UPSTREAM=backend:8000 \
     NGINX_CLIENT_MAX_BODY_SIZE=2g \
