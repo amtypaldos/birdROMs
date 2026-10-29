@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 vi.mock("./api/client", () => ({
-  api: { handheldInfo: vi.fn(), downloadHandheldApp: vi.fn() }
+  api: { handheldInfo: vi.fn(), downloadHandheldApp: vi.fn(), approveDevice: vi.fn() }
 }));
 
 import HandheldView from "./HandheldView";
@@ -26,6 +26,7 @@ describe("HandheldView", () => {
     vi.resetAllMocks();
     api.handheldInfo.mockResolvedValue(INFO);
     api.downloadHandheldApp.mockResolvedValue();
+    api.approveDevice.mockResolvedValue({ detail: "Device approved." });
   });
   afterEach(cleanup);
 
@@ -64,5 +65,63 @@ describe("HandheldView", () => {
     await act(async () => {});
 
     expect(screen.getByRole("alert")).toHaveTextContent("boom");
+  });
+
+  it("mentions typing the code on this page in the link step", async () => {
+    await renderView();
+
+    expect(screen.getByText(/type the code shown on the handheld/i)).toBeInTheDocument();
+  });
+
+  it("approves a typed code, trimmed, and shows success", async () => {
+    await renderView();
+
+    fireEvent.change(screen.getByLabelText("Pairing code"), { target: { value: "  ABC123 " } });
+    fireEvent.click(screen.getByRole("button", { name: "Approve device" }));
+    await act(async () => {});
+
+    expect(api.approveDevice).toHaveBeenCalledTimes(1);
+    expect(api.approveDevice).toHaveBeenCalledWith("ABC123");
+    expect(screen.getByRole("status")).toHaveTextContent(/Device approved/);
+    expect(screen.getByLabelText("Pairing code")).toHaveValue("");
+  });
+
+  it("shows the error when approving fails", async () => {
+    api.approveDevice.mockRejectedValue(new Error("This pairing code has expired."));
+    await renderView();
+
+    fireEvent.change(screen.getByLabelText("Pairing code"), { target: { value: "ABC123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Approve device" }));
+    await act(async () => {});
+
+    expect(screen.getByRole("alert")).toHaveTextContent("This pairing code has expired.");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("does not call the API for an empty or blank code", async () => {
+    await renderView();
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve device" }));
+    fireEvent.change(screen.getByLabelText("Pairing code"), { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: "Approve device" }));
+    await act(async () => {});
+
+    expect(api.approveDevice).not.toHaveBeenCalled();
+  });
+
+  it("disables the button while the approval is in flight", async () => {
+    let resolve;
+    api.approveDevice.mockReturnValue(new Promise((r) => { resolve = r; }));
+    await renderView();
+
+    fireEvent.change(screen.getByLabelText("Pairing code"), { target: { value: "ABC123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Approve device" }));
+    await act(async () => {});
+
+    expect(screen.getByRole("button", { name: "Approve device" })).toBeDisabled();
+
+    await act(async () => { resolve({ detail: "Device approved." }); });
+
+    expect(screen.getByRole("button", { name: "Approve device" })).toBeEnabled();
   });
 });

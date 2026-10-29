@@ -10,6 +10,10 @@ export default function HandheldView() {
   const [info, setInfo] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [code, setCode] = useState("");
+  const [pairing, setPairing] = useState(false);
+  const [pairMessage, setPairMessage] = useState("");
+  const [pairError, setPairError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -21,6 +25,24 @@ export default function HandheldView() {
       cancelled = true;
     };
   }, []);
+
+  async function approve(event) {
+    event.preventDefault();
+    const trimmed = code.trim();
+    if (!trimmed || pairing) return;
+    setPairing(true);
+    setPairMessage("");
+    setPairError("");
+    try {
+      await api.approveDevice(trimmed);
+      setPairMessage("Device approved — it will connect shortly.");
+      setCode("");
+    } catch (err) {
+      setPairError(String(err.message || err));
+    } finally {
+      setPairing(false);
+    }
+  }
 
   async function download() {
     setBusy(true);
@@ -64,7 +86,25 @@ export default function HandheldView() {
         </li>
         <li>
           <strong>Link it to your account.</strong> The handheld shows a QR code. Scan it with your phone, sign in, and press
-          Approve. Then pick your games and press Start.
+          Approve. Or, if you are already signed in here, type the code shown on the handheld into the box on this page and
+          press Approve. Then pick your games and press Start.
+          <form className="handheld-pair" onSubmit={approve} aria-label="Approve a device by code">
+            <label>
+              <span className="muted">Code shown on the handheld </span>
+              <input
+                type="text"
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+                autoComplete="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                aria-label="Pairing code"
+              />
+            </label>{" "}
+            <button className="primary" type="submit" disabled={pairing}>Approve device</button>
+            {pairMessage ? <p role="status">{pairMessage}</p> : null}
+            {pairError ? <p className="error" role="alert">{pairError}</p> : null}
+          </form>
         </li>
       </ol>
       <h3>Updating</h3>
