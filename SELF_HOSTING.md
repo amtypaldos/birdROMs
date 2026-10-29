@@ -63,7 +63,10 @@ compose file, so you can leave them as they are.
 
 With `DJANGO_DEBUG=False` the backend will not start while `DJANGO_SECRET_KEY` is empty or
 still a placeholder. Local login is off unless `AUTH_METHODS` includes `local` (or
-`ALLOW_LOCAL_LOGIN=True`). The default `AUTH_METHODS=local` enables it.
+`ALLOW_LOCAL_LOGIN=True`). The default `AUTH_METHODS=local` enables it. Self-registration is
+separate and closed by default: create users in `/admin/`, or open sign-up with
+`ALLOW_REGISTRATION=true` (or by ticking *Registration settings* in `/admin/` while the variable
+is unset; a non-empty `ALLOW_REGISTRATION` overrides the checkbox).
 
 Want the env file outside the checkout? Point Compose at it with
 `BIRDROMS_ENV_FILE=/etc/birdroms/birdroms.env`.

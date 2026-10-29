@@ -34,6 +34,12 @@ def parse_allow_local_login(env, debug: bool) -> bool:
     return debug if not raw else _parse_bool("ALLOW_LOCAL_LOGIN", raw)
 
 
+def parse_allow_registration(env):
+    """`ALLOW_REGISTRATION`: True/False when set (it then overrides Django admin), None when unset or blank."""
+    raw = env.get("ALLOW_REGISTRATION", "").strip()
+    return None if not raw else _parse_bool("ALLOW_REGISTRATION", raw)
+
+
 def parse_oidc_settings(env, methods) -> dict:
     """Collect the OIDC provider config, failing fast if `oidc` is enabled but incomplete."""
     if "oidc" in methods:

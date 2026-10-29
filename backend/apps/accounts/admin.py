@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import DeviceToken, OIDCIdentity
+from .models import DeviceToken, OIDCIdentity, RegistrationSettings
 
 
 @admin.register(OIDCIdentity)
@@ -20,4 +20,17 @@ class DeviceTokenAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         # Tokens only come from the pairing flow; a hand-made row would have no usable secret.
+        return False
+
+
+@admin.register(RegistrationSettings)
+class RegistrationSettingsAdmin(admin.ModelAdmin):
+    """The single settings row: tick `allow_registration` to open sign-up (unless the env var overrides it)."""
+
+    list_display = ("__str__", "allow_registration")
+
+    def has_add_permission(self, request):
+        return not RegistrationSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
         return False

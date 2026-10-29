@@ -162,7 +162,24 @@ describe("App", () => {
     expect(screen.queryByRole("link", { name: /Login with/ })).not.toBeInTheDocument();
   });
 
+  it("hides the create-account button when registration is closed", async () => {
+    api.authConfig.mockResolvedValueOnce({ methods: ["local"], registration: false });
+
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: "Login" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create account" })).not.toBeInTheDocument();
+  });
+
+  it("hides the create-account button when the config has no registration flag", async () => {
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: "Login" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create account" })).not.toBeInTheDocument();
+  });
+
   it("registers a local account and signs in", async () => {
+    api.authConfig.mockResolvedValueOnce({ methods: ["local"], registration: true });
     api.register.mockResolvedValueOnce({ token: "newtok", user: { username: "bob" } });
     getToken.mockReturnValueOnce(null).mockReturnValue(null);
 

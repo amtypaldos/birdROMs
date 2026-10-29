@@ -18,13 +18,26 @@ from rest_framework.authtoken.models import Token
 from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.test import APITestCase
 
-from apps.accounts.models import PAIRING_CODE_ALPHABET, DeviceToken, OIDCIdentity, PairingRequest, hash_device_token
-from apps.accounts.services import expire_stale_pairings, set_role, user_role
+from apps.accounts.models import (
+    PAIRING_CODE_ALPHABET,
+    DeviceToken,
+    OIDCIdentity,
+    PairingRequest,
+    RegistrationSettings,
+    hash_device_token,
+)
+from apps.accounts.services import expire_stale_pairings, registration_enabled, set_role, user_role
 from apps.roms.models import ROM, Playlist
-from birdroms.auth_config import parse_allow_local_login, parse_auth_methods, parse_oidc_settings
+from birdroms.auth_config import (
+    parse_allow_local_login,
+    parse_allow_registration,
+    parse_auth_methods,
+    parse_oidc_settings,
+)
 from birdroms.tasks import sweep_expired_pairings
 
 
+@override_settings(AUTH_METHODS={"local"}, ALLOW_LOCAL_LOGIN=False, ALLOW_REGISTRATION=True)
 class RegisterTests(APITestCase):
     url = reverse("register")
 
@@ -179,6 +192,16 @@ class AuthSettingsParsingTests(SimpleTestCase):
         with self.assertRaises(ImproperlyConfigured):
             parse_allow_local_login({"ALLOW_LOCAL_LOGIN": "maybe"}, debug=True)
 
+    def test_allow_registration_parsing(self):
+        self.assertIsNone(parse_allow_registration({}))
+        self.assertIsNone(parse_allow_registration({"ALLOW_REGISTRATION": "  "}))
+        self.assertIs(parse_allow_registration({"ALLOW_REGISTRATION": "yes"}), True)
+        self.assertIs(parse_allow_registration({"ALLOW_REGISTRATION": "On"}), True)
+        self.assertIs(parse_allow_registration({"ALLOW_REGISTRATION": "no"}), False)
+        self.assertIs(parse_allow_registration({"ALLOW_REGISTRATION": "0"}), False)
+        with self.assertRaises(ImproperlyConfigured):
+            parse_allow_registration({"ALLOW_REGISTRATION": "maybe"})
+
     def test_oidc_requires_provider_settings_when_enabled(self):
         with self.assertRaisesMessage(ImproperlyConfigured, "OIDC_CLIENT_SECRET"):
             parse_oidc_settings({"OIDC_ISSUER": "https://id", "OIDC_CLIENT_ID": "x", "OIDC_REDIRECT_URI": "y"}, {"oidc"})
@@ -197,7 +220,24 @@ class AuthConfigTests(APITestCase):
     def test_local_only(self):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data, {"methods": ["local"]})
+        self.assertEqual(response.data, {"methods": ["local"], "registration": False})
+
+    @override_settings(AUTH_METHODS={"local"}, ALLOW_LOCAL_LOGIN=False, ALLOW_REGISTRATION=True)
+    def test_registration_true_when_local_login_and_registration_open(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.data, {"methods": ["local"], "registration": True})
+
+    @override_settings(AUTH_METHODS={"oidc"}, ALLOW_LOCAL_LOGIN=False, ALLOW_REGISTRATION=True, OIDC=OIDC_TEST_CONFIG)
+    def test_registration_false_when_local_login_is_off(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.data["methods"], ["oidc"])
+        self.assertIs(response.data["registration"], False)
+
+    @override_settings(AUTH_METHODS={"local"}, ALLOW_LOCAL_LOGIN=False, ALLOW_REGISTRATION=None)
+    def test_registration_follows_admin_checkbox_when_env_unset(self):
+        self.assertIs(self.client.get(self.url).data["registration"], False)
+        RegistrationSettings.objects.update_or_create(pk=1, defaults={"allow_registration": True})
+        self.assertIs(self.client.get(self.url).data["registration"], True)
 
     @override_settings(AUTH_METHODS={"oidc"}, ALLOW_LOCAL_LOGIN=False, OIDC=OIDC_TEST_CONFIG)
     def test_oidc_only(self):
@@ -232,20 +272,102 @@ class LocalLoginGatingTests(APITestCase):
             reverse("register"), {"username": "erin", "email": "e@example.com", "password": "s3cure-pass"}, format="json"
         )
 
-    @override_settings(AUTH_METHODS={"oidc"}, ALLOW_LOCAL_LOGIN=False, OIDC=OIDC_TEST_CONFIG)
+    @override_settings(AUTH_METHODS={"oidc"}, ALLOW_LOCAL_LOGIN=False, ALLOW_REGISTRATION=True, OIDC=OIDC_TEST_CONFIG)
     def test_local_endpoints_404_when_disabled(self):
         self.assertEqual(self.login().status_code, status.HTTP_404_NOT_FOUND)
         self.assertEqual(self.register().status_code, status.HTTP_404_NOT_FOUND)
         self.assertFalse(User.objects.filter(username="erin").exists())
 
-    @override_settings(AUTH_METHODS={"oidc"}, ALLOW_LOCAL_LOGIN=True, OIDC=OIDC_TEST_CONFIG)
+    @override_settings(AUTH_METHODS={"oidc"}, ALLOW_LOCAL_LOGIN=True, ALLOW_REGISTRATION=True, OIDC=OIDC_TEST_CONFIG)
     def test_allow_local_login_force_enables_local_endpoints(self):
         self.assertEqual(self.login().status_code, status.HTTP_200_OK)
         self.assertEqual(self.register().status_code, status.HTTP_201_CREATED)
 
+    @override_settings(AUTH_METHODS={"local"}, ALLOW_LOCAL_LOGIN=False, ALLOW_REGISTRATION=None)
+    def test_login_works_and_register_404s_when_registration_closed(self):
+        self.assertEqual(self.login().status_code, status.HTTP_200_OK)
+        self.assertEqual(self.register().status_code, status.HTTP_404_NOT_FOUND)
+        self.assertFalse(User.objects.filter(username="erin").exists())
+
     @override_settings(AUTH_METHODS={"local", "oidc"}, ALLOW_LOCAL_LOGIN=False, OIDC=OIDC_TEST_CONFIG)
     def test_local_endpoints_work_when_both_enabled(self):
         self.assertEqual(self.login().status_code, status.HTTP_200_OK)
+
+
+@override_settings(AUTH_METHODS={"local"}, ALLOW_LOCAL_LOGIN=False)
+class RegistrationSettingTests(APITestCase):
+    """Env `ALLOW_REGISTRATION` (when set) beats the Django-admin singleton; unset falls back to it."""
+
+    def register(self):
+        return self.client.post(
+            reverse("register"), {"username": "gina", "email": "g@example.com", "password": "s3cure-pass"}, format="json"
+        )
+
+    def set_admin(self, value):
+        RegistrationSettings.objects.update_or_create(pk=1, defaults={"allow_registration": value})
+
+    def setUp(self):
+        cache.clear()
+
+    @override_settings(ALLOW_REGISTRATION=None)
+    def test_unset_env_and_no_admin_row_is_closed(self):
+        self.assertFalse(RegistrationSettings.objects.exists())
+        self.assertFalse(registration_enabled())
+        self.assertEqual(self.register().status_code, status.HTTP_404_NOT_FOUND)
+        self.assertFalse(User.objects.filter(username="gina").exists())
+
+    @override_settings(ALLOW_REGISTRATION=None)
+    def test_unset_env_and_checkbox_off_is_closed(self):
+        self.set_admin(False)
+        self.assertEqual(self.register().status_code, status.HTTP_404_NOT_FOUND)
+
+    @override_settings(ALLOW_REGISTRATION=None)
+    def test_unset_env_and_checkbox_on_is_open(self):
+        self.set_admin(True)
+        self.assertTrue(registration_enabled())
+        self.assertEqual(self.register().status_code, status.HTTP_201_CREATED)
+
+    @override_settings(ALLOW_REGISTRATION=True)
+    def test_env_true_opens_even_when_checkbox_off(self):
+        self.set_admin(False)
+        self.assertEqual(self.register().status_code, status.HTTP_201_CREATED)
+
+    @override_settings(ALLOW_REGISTRATION=False)
+    def test_env_false_closes_even_when_checkbox_on(self):
+        self.set_admin(True)
+        self.assertFalse(registration_enabled())
+        self.assertEqual(self.register().status_code, status.HTTP_404_NOT_FOUND)
+
+    @override_settings(AUTH_METHODS={"oidc"}, ALLOW_LOCAL_LOGIN=False, ALLOW_REGISTRATION=True, OIDC=OIDC_TEST_CONFIG)
+    def test_local_login_off_keeps_register_404_even_if_open(self):
+        self.assertFalse(registration_enabled())
+        self.assertEqual(self.register().status_code, status.HTTP_404_NOT_FOUND)
+
+
+class RegistrationSettingsModelTests(APITestCase):
+    def test_load_creates_the_single_row_closed_by_default(self):
+        row = RegistrationSettings.load()
+        self.assertEqual(row.pk, 1)
+        self.assertFalse(row.allow_registration)
+        self.assertEqual(RegistrationSettings.load().pk, 1)
+        self.assertEqual(RegistrationSettings.objects.count(), 1)
+
+    def test_save_always_uses_pk_1(self):
+        RegistrationSettings(allow_registration=True).save()
+        RegistrationSettings(pk=5, allow_registration=False).save()
+        self.assertEqual(list(RegistrationSettings.objects.values_list("pk", flat=True)), [1])
+
+    def test_admin_blocks_add_once_row_exists_and_always_blocks_delete(self):
+        model_admin = admin.site._registry[RegistrationSettings]
+        request = mock.Mock()
+        self.assertTrue(model_admin.has_add_permission(request))
+        RegistrationSettings.load()
+        self.assertFalse(model_admin.has_add_permission(request))
+        self.assertFalse(model_admin.has_delete_permission(request))
+
+    def test_admin_help_text_mentions_env_override(self):
+        help_text = RegistrationSettings._meta.get_field("allow_registration").help_text
+        self.assertIn("ALLOW_REGISTRATION", help_text)
 
 
 class MeTests(APITestCase):
@@ -397,7 +519,7 @@ class OIDCFlowTests(APITestCase):
         self.assertEqual(User.objects.count(), 1)
         self.assertEqual(OIDCIdentity.objects.get().user, local)
 
-    @override_settings(AUTH_METHODS={"local", "oidc"}, OIDC={**OIDC_TEST_CONFIG, "LINK_BY_EMAIL": True})
+    @override_settings(AUTH_METHODS={"local", "oidc"}, ALLOW_REGISTRATION=True, OIDC={**OIDC_TEST_CONFIG, "LINK_BY_EMAIL": True})
     def test_linking_by_email_evicts_a_pre_registered_squatter(self):
         # Local sign-up does not verify email, so an attacker can pre-register the victim's address
         # and keep the password and token. Linking must cut both off.

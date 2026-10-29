@@ -21,6 +21,38 @@ class OIDCIdentity(models.Model):
         return f"{self.user} <{self.issuer} {self.subject}>"
 
 
+class RegistrationSettings(models.Model):
+    """Singleton (pk=1) editable in Django admin: may anyone self-register?
+
+    A non-empty `ALLOW_REGISTRATION` environment variable overrides this; see `registration_enabled()`.
+    """
+
+    allow_registration = models.BooleanField(
+        default=False,
+        help_text=(
+            "Let visitors create their own (read-only) account from the login page. "
+            "A non-empty ALLOW_REGISTRATION environment variable overrides this checkbox. "
+            "Registration also requires local login to be enabled."
+        ),
+    )
+
+    class Meta:
+        verbose_name = "registration settings"
+        verbose_name_plural = "registration settings"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def __str__(self):
+        return "Registration settings"
+
+
 # No 0/O or 1/I/L, so a code read off a handheld screen can be typed on a phone without mix-ups.
 PAIRING_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 PAIRING_CODE_LENGTH = 6
