@@ -40,7 +40,7 @@ describe("HandheldView", () => {
     expect(screen.getByText(/2\.8 MB/)).toBeInTheDocument();
   });
 
-  it("downloads the package with the sign-in token", async () => {
+  it("downloads the package through the signed-in session", async () => {
     await renderView();
 
     fireEvent.click(screen.getByRole("button", { name: "Download birdROMs.muxapp" }));

@@ -14,9 +14,8 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import status
-from rest_framework.authtoken.models import Token
 from rest_framework.throttling import SimpleRateThrottle
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 
 from apps.accounts.models import (
     PAIRING_CODE_ALPHABET,
@@ -44,7 +43,7 @@ class RegisterTests(APITestCase):
     def setUp(self):
         cache.clear()  # Throttle counters live in the cache.
 
-    def test_register_creates_readonly_user_and_returns_token(self):
+    def test_register_creates_readonly_user_and_signs_in_without_a_token(self):
         response = self.client.post(
             self.url,
             {"username": "alice", "email": "alice@example.com", "password": "s3cure-pass"},
@@ -54,9 +53,20 @@ class RegisterTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         user = User.objects.get(username="alice")
         self.assertTrue(user.groups.filter(name="readonly").exists())
-        self.assertEqual(response.data["token"], Token.objects.get(user=user).key)
+        self.assertNotIn("token", response.data)
         self.assertEqual(response.data["user"]["username"], "alice")
         self.assertNotIn("password", response.data["user"])
+        session = response.cookies[settings.SESSION_COOKIE_NAME]
+        self.assertTrue(session["httponly"])
+        self.assertEqual(self.client.get(reverse("me")).data["username"], "alice")  # signed in by cookie
+
+    def test_register_requires_a_csrf_token(self):
+        client = APIClient(enforce_csrf_checks=True)
+        response = client.post(
+            self.url, {"username": "alice", "email": "", "password": "s3cure-pass-xyz"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(User.objects.filter(username="alice").exists())
 
     def test_register_rejects_short_password(self):
         response = self.client.post(
@@ -112,12 +122,13 @@ class LoginTests(APITestCase):
         cache.clear()
         self.user = User.objects.create_user(username="carol", password="correct-horse")
 
-    def test_login_with_valid_credentials_returns_token(self):
+    def test_login_with_valid_credentials_starts_a_session(self):
         response = self.client.post(self.url, {"username": "carol", "password": "correct-horse"}, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["token"], Token.objects.get(user=self.user).key)
+        self.assertNotIn("token", response.data)
         self.assertEqual(response.data["user"]["username"], "carol")
+        self.assertEqual(self.client.get(reverse("me")).data["username"], "carol")
 
     def test_login_with_invalid_credentials_returns_400(self):
         response = self.client.post(self.url, {"username": "carol", "password": "wrong-password"}, format="json")
@@ -379,8 +390,7 @@ class MeTests(APITestCase):
     def test_returns_user_and_role(self):
         user = User.objects.create_user(username="frank", email="frank@example.com", password="pw-123456")
         set_role(user, "readonly")
-        token = Token.objects.create(user=user)
-        self.client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+        self.client.force_login(user)
 
         response = self.client.get(self.url)
 
@@ -426,10 +436,20 @@ class OIDCFlowTests(APITestCase):
             return self.client.get(self.callback_url + query)
 
     def fragment(self, response):
+        """The `oidc_error` fragment of a failed sign-in redirect."""
         self.assertEqual(response.status_code, 302)
         location = response["Location"]
         self.assertTrue(location.startswith("http://spa.example/#"), location)
+        self.assertNotIn(settings.SESSION_COOKIE_NAME, response.cookies)
         return parse_qs(urlparse(location).fragment)
+
+    def signed_in(self, response):
+        """A successful sign-in redirects with no token at all; the session cookie is the sign-in."""
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], "http://spa.example/")
+        session = response.cookies[settings.SESSION_COOKIE_NAME]
+        self.assertTrue(session["httponly"])
+        return self.client.get(reverse("me")).data
 
     def test_login_redirects_to_provider_with_configured_redirect_uri(self):
         client = fake_oidc_client({})
@@ -462,39 +482,38 @@ class OIDCFlowTests(APITestCase):
         self.assertIn("nonce", query)
         self.assertNotIn("test-secret", response["Location"])
 
-    def test_first_login_provisions_readonly_user_and_returns_api_token(self):
-        fragment = self.fragment(self.callback(self.claims()))
+    def test_first_login_provisions_readonly_user_and_starts_a_session(self):
+        me = self.signed_in(self.callback(self.claims()))
 
         user = User.objects.get(username="grace")
         self.assertEqual(user.email, "grace@example.com")
         self.assertFalse(user.has_usable_password())
         self.assertEqual(user_role(user), "readonly")
         self.assertEqual(OIDCIdentity.objects.get(user=user).subject, "user-123")
-        self.assertEqual(fragment["oidc_token"], [Token.objects.get(user=user).key])
+        self.assertEqual(me["username"], "grace")
 
-        # The token works against the existing DRF API.
-        self.client.credentials(HTTP_AUTHORIZATION=f"Token {fragment['oidc_token'][0]}")
+        # The session cookie works against the API.
         self.assertEqual(self.client.get(reverse("me")).data["role"], "readonly")
         self.assertEqual(self.client.get("/api/roms/").status_code, status.HTTP_200_OK)
 
     def test_admin_group_claim_maps_to_super_admin(self):
-        self.fragment(self.callback(self.claims(groups=["birdroms-admins", "other"])))
+        self.signed_in(self.callback(self.claims(groups=["birdroms-admins", "other"])))
         self.assertEqual(user_role(User.objects.get(username="grace")), "super_admin")
 
     def test_groups_claim_fetched_from_userinfo_when_missing_from_id_token(self):
         claims = self.claims()
         del claims["groups"]
-        self.fragment(self.callback(claims, userinfo={"sub": "user-123", "groups": ["birdroms-admins"]}))
+        self.signed_in(self.callback(claims, userinfo={"sub": "user-123", "groups": ["birdroms-admins"]}))
         self.assertEqual(user_role(User.objects.get(username="grace")), "super_admin")
 
     @override_settings(OIDC={**OIDC_TEST_CONFIG, "GROUPS_CLAIM": "roles"})
     def test_custom_groups_claim(self):
-        self.fragment(self.callback(self.claims(roles="birdroms-admins")))
+        self.signed_in(self.callback(self.claims(roles="birdroms-admins")))
         self.assertEqual(user_role(User.objects.get(username="grace")), "super_admin")
 
     def test_returning_user_matches_on_subject_and_role_is_resynced(self):
         self.callback(self.claims(groups=["birdroms-admins"]))
-        self.fragment(self.callback(self.claims(preferred_username="renamed", email="new@example.com")))
+        self.signed_in(self.callback(self.claims(preferred_username="renamed", email="new@example.com")))
 
         self.assertEqual(User.objects.count(), 1)
         user = User.objects.get()
@@ -506,7 +525,7 @@ class OIDCFlowTests(APITestCase):
     def test_username_collision_gets_suffix_and_does_not_hijack_local_account(self):
         local = User.objects.create_user(username="grace", email="grace@example.com", password="pw-123456")
 
-        self.fragment(self.callback(self.claims()))
+        self.signed_in(self.callback(self.claims()))
 
         self.assertEqual(User.objects.count(), 2)
         self.assertFalse(hasattr(User.objects.get(pk=local.pk), "oidc_identity"))
@@ -515,28 +534,29 @@ class OIDCFlowTests(APITestCase):
     @override_settings(OIDC={**OIDC_TEST_CONFIG, "LINK_BY_EMAIL": True})
     def test_link_by_verified_email_when_enabled(self):
         local = User.objects.create_user(username="gracelocal", email="Grace@example.com", password="pw-123456")
-        self.fragment(self.callback(self.claims()))
+        self.signed_in(self.callback(self.claims()))
         self.assertEqual(User.objects.count(), 1)
         self.assertEqual(OIDCIdentity.objects.get().user, local)
 
     @override_settings(AUTH_METHODS={"local", "oidc"}, ALLOW_REGISTRATION=True, OIDC={**OIDC_TEST_CONFIG, "LINK_BY_EMAIL": True})
     def test_linking_by_email_evicts_a_pre_registered_squatter(self):
         # Local sign-up does not verify email, so an attacker can pre-register the victim's address
-        # and keep the password and token. Linking must cut both off.
-        attacker = self.client.post(
+        # and keep the password and a signed-in session. Linking must cut both off.
+        attacker = APIClient()
+        registered = attacker.post(
             reverse("register"),
             {"username": "squatter", "email": "grace@example.com", "password": "attacker-pass-1"},
             format="json",
         )
-        old_token = attacker.data["token"]
+        self.assertEqual(registered.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(attacker.get(reverse("me")).status_code, status.HTTP_200_OK)
 
-        fragment = self.fragment(self.callback(self.claims()))
+        self.signed_in(self.callback(self.claims()))
 
         user = User.objects.get(username="squatter")
         self.assertEqual(OIDCIdentity.objects.get().user, user)
         self.assertFalse(user.has_usable_password())
-        self.assertFalse(Token.objects.filter(key=old_token).exists())
-        self.assertNotEqual(fragment["oidc_token"][0], old_token)
+        self.assertIn(attacker.get(reverse("me")).status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
         relogin = self.client.post(
             reverse("login"), {"username": "squatter", "password": "attacker-pass-1"}, format="json"
         )
@@ -545,24 +565,40 @@ class OIDCFlowTests(APITestCase):
     @override_settings(OIDC={**OIDC_TEST_CONFIG, "LINK_BY_EMAIL": True})
     def test_unverified_email_is_never_linked(self):
         User.objects.create_user(username="gracelocal", email="grace@example.com", password="pw-123456")
-        self.fragment(self.callback(self.claims(email_verified=False)))
+        self.signed_in(self.callback(self.claims(email_verified=False)))
         self.assertEqual(User.objects.count(), 2)
 
-    def test_inactive_user_gets_no_token(self):
+    def test_inactive_user_is_not_signed_in(self):
         self.callback(self.claims())
+        self.client.cookies.clear()
         User.objects.filter(username="grace").update(is_active=False)
-        Token.objects.all().delete()
 
         fragment = self.fragment(self.callback(self.claims()))
 
-        self.assertNotIn("oidc_token", fragment)
-        self.assertIn("oidc_error", fragment)
-        self.assertFalse(Token.objects.exists())
+        self.assertEqual(fragment, {"oidc_error": ["disabled"]})
+        self.assertIn(self.client.get(reverse("me")).status_code, (401, 403))
 
-    def test_provider_error_redirects_with_error(self):
-        fragment = self.fragment(self.callback(self.claims(), query="?error=access_denied"))
-        self.assertEqual(fragment["oidc_error"], ["access_denied"])
+    def test_provider_error_redirects_with_a_fixed_code_never_the_provider_text(self):
+        with self.assertLogs("apps.accounts.views", "WARNING"):
+            response = self.callback(
+                self.claims(), query="?error=access_denied&error_description=%3Cscript%3Ealert(1)%3C/script%3E"
+            )
+        fragment = self.fragment(response)
+        self.assertEqual(fragment, {"oidc_error": ["provider_error"]})
+        self.assertNotIn("script", response["Location"])
+        self.assertNotIn("access_denied", response["Location"])
         self.assertFalse(User.objects.exists())
+
+    def test_missing_subject_redirects_with_a_fixed_code(self):
+        claims = self.claims()
+        del claims["sub"]
+        self.assertEqual(self.fragment(self.callback(claims)), {"oidc_error": ["no_subject"]})
+        self.assertFalse(User.objects.exists())
+
+    def test_every_oidc_error_code_is_a_known_fixed_one(self):
+        from apps.accounts.views import OIDC_ERRORS
+
+        self.assertEqual(set(OIDC_ERRORS), {"provider_error", "failed", "no_subject", "disabled", "not_allowed"})
 
     def test_failed_token_exchange_redirects_with_generic_error(self):
         client = fake_oidc_client({})
@@ -571,9 +607,72 @@ class OIDCFlowTests(APITestCase):
             "apps.accounts.views", "WARNING"
         ):
             fragment = self.fragment(self.client.get(self.callback_url + "?code=abc&state=bad"))
-        self.assertIn("oidc_error", fragment)
-        self.assertNotIn("mismatching_state", fragment["oidc_error"][0])
+        self.assertEqual(fragment, {"oidc_error": ["failed"]})
         self.assertFalse(User.objects.exists())
+
+    def allow_list(self, groups=(), domains=()):
+        return override_settings(
+            OIDC={**OIDC_TEST_CONFIG, "ALLOWED_GROUPS": list(groups), "ALLOWED_EMAIL_DOMAINS": list(domains)}
+        )
+
+    def test_no_allow_list_lets_every_provider_user_in(self):
+        self.signed_in(self.callback(self.claims(email="anyone@else.org", groups=[])))
+
+    def test_allowed_group_lets_a_member_in(self):
+        with self.allow_list(groups=["friends"]):
+            self.signed_in(self.callback(self.claims(groups=["other", "friends"])))
+
+    def test_allowed_group_refuses_a_non_member_and_creates_nothing(self):
+        with self.allow_list(groups=["friends"]), self.assertLogs("apps.accounts.views", "WARNING"):
+            fragment = self.fragment(self.callback(self.claims(groups=["strangers"])))
+        self.assertEqual(fragment, {"oidc_error": ["not_allowed"]})
+        self.assertFalse(User.objects.exists())
+        self.assertFalse(OIDCIdentity.objects.exists())
+
+    def test_allowed_group_handles_a_string_claim_and_a_missing_claim(self):
+        with self.allow_list(groups=["friends"]):
+            self.signed_in(self.callback(self.claims(groups="friends")))
+        self.client.cookies.clear()
+        claims = self.claims(sub="user-456", preferred_username="heidi", email="heidi@example.com")
+        del claims["groups"]
+        with self.allow_list(groups=["friends"]), self.assertLogs("apps.accounts.views", "WARNING"):
+            self.assertEqual(self.fragment(self.callback(claims)), {"oidc_error": ["not_allowed"]})
+
+    def test_allowed_email_domain_needs_a_verified_email(self):
+        with self.allow_list(domains=["example.com"]):
+            self.signed_in(self.callback(self.claims(email="Grace@Example.com")))
+        self.client.cookies.clear()
+        with self.allow_list(domains=["example.com"]), self.assertLogs("apps.accounts.views", "WARNING"):
+            unverified = self.callback(
+                self.claims(sub="user-456", preferred_username="ivan", email="ivan@example.com", email_verified=False)
+            )
+        self.assertEqual(self.fragment(unverified), {"oidc_error": ["not_allowed"]})
+        self.assertFalse(User.objects.filter(username="ivan").exists())
+
+    def test_allowed_email_domain_refuses_other_domains_and_lookalikes(self):
+        for email in ("mallory@evil.org", "mallory@example.com.evil.org", "mallory@notexample.com", "no-at-sign"):
+            with self.subTest(email=email), self.allow_list(domains=["example.com"]), self.assertLogs(
+                "apps.accounts.views", "WARNING"
+            ):
+                self.assertEqual(
+                    self.fragment(self.callback(self.claims(sub=f"s-{email}", email=email))),
+                    {"oidc_error": ["not_allowed"]},
+                )
+        self.assertFalse(User.objects.exists())
+
+    def test_either_list_matching_is_enough(self):
+        with self.allow_list(groups=["friends"], domains=["example.com"]):
+            self.signed_in(self.callback(self.claims(email="grace@else.org", groups=["friends"])))
+        self.client.cookies.clear()
+        with self.allow_list(groups=["friends"], domains=["example.com"]):
+            self.signed_in(self.callback(self.claims(sub="user-456", preferred_username="judy", groups=[])))
+
+    def test_a_refused_user_who_already_has_an_account_is_still_refused(self):
+        self.callback(self.claims())
+        self.client.cookies.clear()
+        with self.allow_list(groups=["friends"]), self.assertLogs("apps.accounts.views", "WARNING"):
+            self.assertEqual(self.fragment(self.callback(self.claims())), {"oidc_error": ["not_allowed"]})
+        self.assertIn(self.client.get(reverse("me")).status_code, (401, 403))
 
     @override_settings(AUTH_METHODS={"local"})
     def test_oidc_endpoints_404_when_disabled(self):
@@ -590,7 +689,9 @@ class DevicePairingTests(APITestCase):
     def setUp(self):
         cache.clear()  # Throttle counters live in the cache.
         self.user = User.objects.create_user("owner", password="s3cure-pass-xyz")
-        self.api_token = Token.objects.create(user=self.user)
+        # The owner's phone: a signed-in browser session. Devices never share it.
+        self.owner = APIClient()
+        self.owner.force_login(self.user)
 
     def _start(self):
         response = self.client.post(self.start_url)
@@ -598,9 +699,7 @@ class DevicePairingTests(APITestCase):
         return response.data
 
     def _approve(self, code):
-        return self.client.post(
-            self.approve_url, {"code": code}, format="json", HTTP_AUTHORIZATION=f"Token {self.api_token.key}"
-        )
+        return self.owner.post(self.approve_url, {"code": code}, format="json")
 
     def _expire(self, code):
         PairingRequest.objects.filter(code=code).update(expires_at=timezone.now() - timedelta(seconds=1))
@@ -848,13 +947,8 @@ class DevicePairingTests(APITestCase):
         self.assertEqual(rom.title, "Zelda")
         self.assertEqual(playlist.name, "Mine")
 
-        # The same user's regular API token is unaffected, so the restriction is the device's.
-        regular = self.client.patch(
-            reverse("playlist-detail", args=[playlist.pk]),
-            {"name": "Renamed"},
-            format="json",
-            HTTP_AUTHORIZATION=f"Token {self.api_token.key}",
-        )
+        # The same user's browser session is unaffected, so the restriction is the device's.
+        regular = self.owner.patch(reverse("playlist-detail", args=[playlist.pk]), {"name": "Renamed"}, format="json")
         self.assertEqual(regular.status_code, status.HTTP_200_OK)
 
     def test_device_token_can_still_read(self):

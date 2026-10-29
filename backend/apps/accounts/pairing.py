@@ -76,7 +76,7 @@ class PairApproveView(APIView):
     further tokens that would outlive its own revocation.
     """
 
-    authentication_classes = [authentication.TokenAuthentication, authentication.SessionAuthentication]
+    authentication_classes = [authentication.SessionAuthentication]
     throttle_classes = [PairCodeThrottle]
 
     def post(self, request):

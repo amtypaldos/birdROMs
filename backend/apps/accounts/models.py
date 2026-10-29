@@ -110,3 +110,48 @@ class PairingRequest(models.Model):
 
     def __str__(self):
         return self.code
+
+
+def hash_invite_token(raw_token: str) -> str:
+    """The digest stored for an invite token (256 random bits, so a plain SHA-256 is enough)."""
+    return hashlib.sha256(raw_token.encode()).hexdigest()
+
+
+class Invite(models.Model):
+    """A single-use link an admin sends to a friend so they can create a local account.
+
+    Only the SHA-256 digest of the token is stored; the raw token is shown to the admin once, at creation.
+    """
+
+    ROLE_CHOICES = [("readonly", "readonly"), ("super_admin", "super_admin")]
+
+    token_hash = models.CharField(max_length=64, unique=True, editable=False)
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="readonly")
+    label = models.CharField(max_length=100, blank=True, default="")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+    used_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def status(self, now=None):
+        """`used`, `revoked`, `expired` or `pending`."""
+        now = now or timezone.now()
+        if self.used_at is not None:
+            return "used"
+        if self.revoked_at is not None:
+            return "revoked"
+        if self.expires_at <= now:
+            return "expired"
+        return "pending"
+
+    def __str__(self):
+        return f"invite {self.pk} ({self.role}, {self.status()})"

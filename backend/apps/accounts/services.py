@@ -5,7 +5,6 @@ from django.conf import settings
 from django.contrib.auth.models import Group, User
 from django.db import transaction
 from django.utils import timezone
-from rest_framework.authtoken.models import Token
 
 from .models import DeviceToken, OIDCIdentity, PairingRequest, RegistrationSettings
 
@@ -83,6 +82,31 @@ def get_oidc_client():
     return _oidc_clients[key]
 
 
+def _claim_list(value):
+    if isinstance(value, str):
+        return [value]
+    return [str(item) for item in value or []]
+
+
+def oidc_login_allowed(claims) -> bool:
+    """Whether the allow-list (if any) admits this user. Fails closed once either list is set.
+
+    `OIDC_ALLOWED_GROUPS` matches the groups claim; `OIDC_ALLOWED_EMAIL_DOMAINS` matches the part after the
+    `@` of the email, and only when the provider marks it verified. A user matching neither is refused.
+    With neither list set, every user the provider authenticates is allowed.
+    """
+    config = settings.OIDC
+    allowed_groups, allowed_domains = config["ALLOWED_GROUPS"], config["ALLOWED_EMAIL_DOMAINS"]
+    if not allowed_groups and not allowed_domains:
+        return True
+    if allowed_groups and set(allowed_groups) & set(_claim_list(claims.get(config["GROUPS_CLAIM"]))):
+        return True
+    email = str(claims.get("email") or "")
+    if allowed_domains and claims.get("email_verified") is True and "@" in email:
+        return email.rsplit("@", 1)[1].lower() in allowed_domains
+    return False
+
+
 def role_from_claims(claims):
     config = settings.OIDC
     admin_group = config["ADMIN_GROUP"]
@@ -110,9 +134,9 @@ def provision_oidc_user(claims):
 
     Users are matched on the stable `(issuer, sub)` pair. With `OIDC_LINK_BY_EMAIL`, a first
     login may instead attach to an existing user with the same email, but only when the provider
-    marks that email as verified; the account's local password and API token are then revoked,
-    since local sign-up does not prove ownership of the address. The role group is re-synced from the claims on every login so
-    that removing someone from `OIDC_ADMIN_GROUP` at the provider takes effect.
+    marks that email as verified; the account's local password is then revoked (which also ends
+    its browser sessions), since local sign-up does not prove ownership of the address. The role group is
+    re-synced from the claims on every login so that removing someone from `OIDC_ADMIN_GROUP` at the provider takes effect.
     """
     config = settings.OIDC
     issuer = claims.get("iss") or config["ISSUER"]
@@ -129,11 +153,10 @@ def provision_oidc_user(claims):
             if len(matches) == 1 and not hasattr(matches[0], "oidc_identity"):
                 user = matches[0]
                 # Local sign-up never verifies email, so whoever created this account may not own
-                # the address. Take it over: drop any password and API token they hold (the
-                # password change also invalidates their sessions), leaving SSO as the way in.
+                # the address. Take it over: drop any password they hold (the password
+                # change also invalidates their sessions), leaving SSO as the way in.
                 user.set_unusable_password()
                 user.save(update_fields=["password"])
-                Token.objects.filter(user=user).delete()
         if user is None:
             user = User(username=_unique_username(claims), email=email)
             user.set_unusable_password()
