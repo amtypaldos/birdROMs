@@ -519,7 +519,7 @@ function ApprovePanel({ code, authed, onDone }) {
 
 const SUPER_ADMIN = "super_admin";
 
-function SessionBar({ me, offline, onRefresh, onLogout }) {
+function SessionBar({ me, offline, onLogout }) {
   return (
     <div className="session">
       {me ? (
@@ -531,7 +531,6 @@ function SessionBar({ me, offline, onRefresh, onLogout }) {
         <p className="muted">Loading account…</p>
       )}
       <div className="row">
-        <button className="ghost" onClick={onRefresh}>Refresh</button>
         <button className="ghost" onClick={onLogout}>Logout</button>
       </div>
     </div>
@@ -682,7 +681,7 @@ export default function App() {
         <h1 className="logo">
           bird<span>ROMs</span>
         </h1>
-        {authed ? <SessionBar me={me} offline={offline} onRefresh={loadRoms} onLogout={logout} /> : null}
+        {authed ? <SessionBar me={me} offline={offline} onLogout={logout} /> : null}
       </header>
       <main className={`container${authed && !pairing ? "" : " container-auth"}`}>
         {offline ? <p className="offline banner" role="status">{OFFLINE_MESSAGE}</p> : null}
