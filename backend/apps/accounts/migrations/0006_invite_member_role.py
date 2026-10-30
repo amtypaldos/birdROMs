@@ -13,6 +13,6 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='invite',
             name='role',
-            field=models.CharField(choices=[('readonly', 'readonly'), ('uploader', 'uploader'), ('super_admin', 'super_admin')], default='readonly', max_length=20),
+            field=models.CharField(choices=[('readonly', 'readonly'), ('member', 'member'), ('super_admin', 'super_admin')], default='readonly', max_length=20),
         ),
     ]

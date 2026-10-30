@@ -114,11 +114,11 @@ class InviteAdminApiTests(APITestCase):
         self.assertEqual((invite.role, invite.label), ("super_admin", "Sam"))
         self.assertAlmostEqual(invite.expires_at, timezone.now() + timedelta(days=2), delta=timedelta(seconds=5))
 
-    def test_create_accepts_the_uploader_role(self):
+    def test_create_accepts_the_member_role(self):
         self.client.force_authenticate(self.admin)
-        response = self.client.post(self.url, {"role": "uploader"}, format="json")
+        response = self.client.post(self.url, {"role": "member"}, format="json")
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(Invite.objects.get().role, "uploader")
+        self.assertEqual(Invite.objects.get().role, "member")
 
     def test_create_rejects_bad_role_and_expiry(self):
         self.client.force_authenticate(self.admin)
@@ -237,11 +237,11 @@ class InviteAcceptApiTests(APITestCase):
         self.assertEqual(self.accept(token=raw, username="deputy").status_code, 201)
         self.assertEqual(user_role(User.objects.get(username="deputy")), "super_admin")
 
-    def test_accept_gives_the_uploader_role(self):
-        invite, raw = create_invite(role="uploader")
-        self.assertEqual(invite.role, "uploader")
+    def test_accept_gives_the_member_role(self):
+        invite, raw = create_invite(role="member")
+        self.assertEqual(invite.role, "member")
         self.assertEqual(self.accept(token=raw, username="helper").status_code, 201)
-        self.assertEqual(user_role(User.objects.get(username="helper")), "uploader")
+        self.assertEqual(user_role(User.objects.get(username="helper")), "member")
 
     def test_second_use_is_refused(self):
         self.assertEqual(self.accept().status_code, 201)
@@ -314,9 +314,9 @@ class CreateInviteCommandTests(APITestCase):
         self.assertEqual((invite.role, invite.label), ("super_admin", "Sam"))
         self.assertAlmostEqual(invite.expires_at, timezone.now() + timedelta(days=1), delta=timedelta(seconds=5))
 
-    def test_uploader_role_option(self):
-        link, _ = self.run_command("--role", "uploader", "--base-url", "http://x")
-        self.assertEqual(find_pending_invite(link.rsplit("/", 1)[1]).role, "uploader")
+    def test_member_role_option(self):
+        link, _ = self.run_command("--role", "member", "--base-url", "http://x")
+        self.assertEqual(find_pending_invite(link.rsplit("/", 1)[1]).role, "member")
 
     def test_unknown_role_is_refused(self):
         with self.assertRaises(CommandError):

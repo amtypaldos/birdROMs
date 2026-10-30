@@ -327,15 +327,15 @@ describe("App", () => {
     expect(await screen.findByRole("button", { name: "Scrape Cover" })).toBeInTheDocument();
   });
 
-  it("shows upload but no scrape or library admin controls to uploaders", async () => {
-    api.me.mockResolvedValueOnce({ id: 3, username: "helper", email: "", role: "uploader" });
+  it("shows upload but no scrape or library admin controls to members", async () => {
+    api.me.mockResolvedValueOnce({ id: 3, username: "helper", email: "", role: "member" });
     api.listRoms.mockResolvedValue(page([{ id: 1, title: "Zelda", platform: "NES", extension: ".nes" }]));
 
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Upload ROM" })).toBeInTheDocument();
     expect(screen.getByText("helper")).toBeInTheDocument();
-    expect(screen.getByText("uploader")).toBeInTheDocument();
+    expect(screen.getByText("member")).toBeInTheDocument();
     expect(await screen.findByText("Zelda")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Download" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Scrape Cover" })).not.toBeInTheDocument();
@@ -548,9 +548,9 @@ describe("global drag-and-drop upload", () => {
     expect(screen.queryByText("Drop ROM files to upload")).not.toBeInTheDocument();
   });
 
-  it("test_dropzone_open_to_uploaders", async () => {
+  it("test_dropzone_open_to_members", async () => {
     api.createRom.mockResolvedValue({});
-    await renderAs("uploader");
+    await renderAs("member");
 
     fireEvent.dragEnter(document.body, dragData([romFile("a.nes")]));
     expect(await screen.findByText("Drop ROM files to upload")).toBeInTheDocument();
@@ -1014,19 +1014,19 @@ describe("creating invites", () => {
     expect(screen.getByText(/will not be shown again/)).toBeInTheDocument();
   });
 
-  it("offers all three roles, and can invite an uploader", async () => {
+  it("offers all three roles, and can invite a member", async () => {
     api.me.mockResolvedValueOnce({ id: 2, username: "root", email: "", role: "super_admin" });
     api.createInvite.mockResolvedValueOnce({ id: 6, url: "https://roms.example.com/invite/tok9", token: "tok9" });
     render(<App />);
 
     fireEvent.click(await screen.findByText("Invite a friend"));
     const select = screen.getByLabelText("Invite role");
-    expect([...select.options].map((option) => option.value)).toEqual(["readonly", "uploader", "super_admin"]);
+    expect([...select.options].map((option) => option.value)).toEqual(["readonly", "member", "super_admin"]);
     expect(screen.getByRole("option", { name: /browse, download and upload/i })).toBeInTheDocument();
-    fireEvent.change(select, { target: { value: "uploader" } });
+    fireEvent.change(select, { target: { value: "member" } });
     fireEvent.click(screen.getByRole("button", { name: "Create invite link" }));
 
-    await waitFor(() => expect(api.createInvite).toHaveBeenCalledWith({ role: "uploader", label: "" }));
+    await waitFor(() => expect(api.createInvite).toHaveBeenCalledWith({ role: "member", label: "" }));
   });
 
   it("does not show the invite form to readonly users", async () => {

@@ -107,7 +107,7 @@ docker compose -f docker-compose.prod.yml exec backend python manage.py createsu
 ```
 
 Sign in with that account in the web UI to upload ROMs and manage the library, or at `/admin/` to
-manage users. In the admin you assign roles by adding users to the `super_admin`, `uploader` or `readonly` group.
+manage users. In the admin you assign roles by adding users to the `super_admin`, `member` or `readonly` group.
 
 To bring in a friend without opening self-registration, make an invite link. It works once and expires
 after `INVITE_TTL_DAYS` (default 7):
@@ -117,11 +117,11 @@ docker compose -f docker-compose.prod.yml exec backend \
   python manage.py create_invite --base-url https://roms.example.com --label "Sam"
 ```
 
-(`--role super_admin` makes an admin and `--role uploader` someone who can upload but not delete; the default is `readonly`.) Signed in as an admin you can also use
+(`--role super_admin` makes an admin and `--role member` someone who can upload but not delete; the default is `readonly`.) Signed in as an admin you can also use
 **Invite a friend** on the Library page. The link is shown once and cannot be recovered; revoke an unused
 one in `/admin/` under *Accounts > Invites*.
 
-For an SSO-only setup, members of `OIDC_ADMIN_GROUP` become `super_admin` (and members of the optional `OIDC_UPLOAD_GROUP` `uploader`) on their first
+For an SSO-only setup, members of `OIDC_ADMIN_GROUP` become `super_admin` (and members of the optional `OIDC_MEMBER_GROUP` `member`) on their first
 login (see [step 6](#6-single-sign-on-oidc--pocket-id-example)). You still need a
 superuser to sign in to `/admin/` with a password. To create one without a prompt
 (e.g. from automation):

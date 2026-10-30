@@ -520,7 +520,7 @@ function ApprovePanel({ code, authed, onDone }) {
 }
 
 const SUPER_ADMIN = "super_admin";
-const UPLOADER = "uploader";
+const MEMBER = "member";
 
 function SessionBar({ me, offline, onLogout }) {
   return (
@@ -730,10 +730,10 @@ export default function App() {
     setPairing(null);
   }
 
-  // Edit/scrape/library controls are super_admin only; uploading is also open to uploaders.
+  // Edit/scrape/library controls are super_admin only; uploading is also open to members.
   // Neither is rendered until the role is known.
   const canWrite = me?.role === SUPER_ADMIN;
-  const canUpload = canWrite || me?.role === UPLOADER;
+  const canUpload = canWrite || me?.role === MEMBER;
   const showApp = authed && !pairing && !inviteToken;
 
   return (

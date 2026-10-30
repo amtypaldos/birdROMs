@@ -9,9 +9,9 @@ from django.utils import timezone
 from .models import DeviceToken, OIDCIdentity, PairingRequest, RegistrationSettings
 
 SUPER_ADMIN = "super_admin"
-UPLOADER = "uploader"
+MEMBER = "member"
 READONLY = "readonly"
-ROLE_GROUPS = (SUPER_ADMIN, UPLOADER, READONLY)
+ROLE_GROUPS = (SUPER_ADMIN, MEMBER, READONLY)
 
 # Expired pairing rows are kept this long so a late poll still reads "gone" rather than "unknown".
 PAIRING_RETENTION = timedelta(hours=1)
@@ -50,7 +50,7 @@ def enabled_methods() -> list:
 
 
 def user_role(user):
-    """The user's birdROMs role: `super_admin`, `uploader`, `readonly`, or None if they have none.
+    """The user's birdROMs role: `super_admin`, `member`, `readonly`, or None if they have none.
 
     A user in several role groups gets the most powerful one, in that order.
     """
@@ -116,12 +116,12 @@ def oidc_login_allowed(claims) -> bool:
 def role_from_claims(claims):
     config = settings.OIDC
     admin_group = config["ADMIN_GROUP"]
-    upload_group = config.get("UPLOAD_GROUP", "")
+    member_group = config.get("MEMBER_GROUP", "")
     groups = _claim_list(claims.get(config["GROUPS_CLAIM"]))
     if admin_group and admin_group in groups:
         return SUPER_ADMIN
-    if upload_group and upload_group in groups:
-        return UPLOADER
+    if member_group and member_group in groups:
+        return MEMBER
     return READONLY
 
 

@@ -151,7 +151,7 @@ export function InviteCreator() {
         <div className="row">
           <select aria-label="Invite role" value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="readonly">Read-only (browse and download)</option>
-            <option value="uploader">Uploader (browse, download and upload)</option>
+            <option value="member">Member (browse, download and upload)</option>
             <option value="super_admin">Admin (also edit, delete and manage the library)</option>
           </select>
           <input

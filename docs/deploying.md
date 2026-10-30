@@ -205,7 +205,7 @@ many new PNGs in the library's `Imgs/` folders. Set `LIBRARY_WRITE_COVERS=False`
 - `AUTH_METHODS=oidc` with `ALLOW_LOCAL_LOGIN=False` hands account control to your identity
   provider (Pocket ID, Authentik, Keycloak, Authelia, Google...). Restrict the client to the
   group of people who should have access at the provider. Members of `OIDC_ADMIN_GROUP` become
-  `super_admin`; members of the optional `OIDC_UPLOAD_GROUP` become `uploader` (can upload but not edit or
+  `super_admin`; members of the optional `OIDC_MEMBER_GROUP` become `member` (can upload but not edit or
   delete); everyone else is read-only. To limit who can sign in at all, set `OIDC_ALLOWED_GROUPS`
   and/or `OIDC_ALLOWED_EMAIL_DOMAINS` (comma-separated; the email domain counts only when the provider
   marks the email verified; both empty means everyone the provider accepts). Keep one Django superuser (created above) for

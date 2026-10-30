@@ -149,14 +149,14 @@ class ROMPermissionTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(ROM.objects.count(), 0)
 
-    def test_uploader_can_upload(self):
-        uploader = make_user("up", "uploader")
-        self.client.force_authenticate(uploader)
+    def test_member_can_upload(self):
+        member = make_user("up", "member")
+        self.client.force_authenticate(member)
 
         response = self.upload()
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(ROM.objects.get(pk=response.data["id"]).uploaded_by, uploader)
+        self.assertEqual(ROM.objects.get(pk=response.data["id"]).uploaded_by, member)
 
     def test_django_superuser_can_upload(self):
         self.client.force_authenticate(User.objects.create_superuser("root", password="test-pass-123"))
@@ -192,24 +192,24 @@ class ROMPermissionTests(APITestCase):
     def test_readonly_reads_but_cannot_edit_delete_or_scrape(self):
         self.assert_reads_but_cannot_write(self.readonly_user)
 
-    def test_uploader_reads_but_cannot_edit_delete_or_scrape(self):
-        self.assert_reads_but_cannot_write(make_user("up", "uploader"))
+    def test_member_reads_but_cannot_edit_delete_or_scrape(self):
+        self.assert_reads_but_cannot_write(make_user("up", "member"))
 
-    def test_uploader_cannot_use_library_admin_or_invites(self):
-        self.client.force_authenticate(make_user("up", "uploader"))
+    def test_member_cannot_use_library_admin_or_invites(self):
+        self.client.force_authenticate(make_user("up", "member"))
         self.assertEqual(self.client.get(reverse("library-status")).status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(self.client.post(reverse("library-scan")).status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(self.client.get(reverse("invites")).status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(self.client.post(reverse("invites"), {}, format="json").status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_uploader_can_create_a_playlist(self):
-        self.client.force_authenticate(make_user("up", "uploader"))
+    def test_member_can_create_a_playlist(self):
+        self.client.force_authenticate(make_user("up", "member"))
         response = self.client.post(reverse("playlist-list"), {"name": "Mine"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
-    def test_device_token_stays_read_only_for_an_uploader(self):
-        uploader = make_user("up", "uploader")
-        _, raw = DeviceToken.mint(uploader)
+    def test_device_token_stays_read_only_for_a_member(self):
+        member = make_user("up", "member")
+        _, raw = DeviceToken.mint(member)
 
         response = self.client.post(
             self.list_url, {"title": "Mine", "file": dummy_rom()}, format="multipart", HTTP_AUTHORIZATION=f"Device {raw}"
@@ -891,7 +891,7 @@ class CoverArtScrapeTests(APITestCase):
 
 class ScrapeRomFilenameTests(APITestCase):
     def make_rom(self, **kwargs):
-        user = make_user("uploader", "super_admin")
+        user = make_user("member", "super_admin")
         return ROM.objects.create(
             title="Bomberman 64", platform="N64", file=dummy_rom("bomberman.z64"), uploaded_by=user, **kwargs
         )

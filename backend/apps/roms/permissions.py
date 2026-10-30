@@ -1,12 +1,12 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
-from apps.accounts.services import SUPER_ADMIN, UPLOADER, user_role
+from apps.accounts.services import MEMBER, SUPER_ADMIN, user_role
 
 
 class IsSuperAdminOrReadOnlyRole(BasePermission):
     """
-    Reads (list, search, download, covers): readonly, uploader, super_admin.
-    Upload (the `create` action): uploader and super_admin.
+    Reads (list, search, download, covers): readonly, member, super_admin.
+    Upload (the `create` action): member and super_admin.
     Every other write (edit, delete, scrape): super_admin only.
     A Django superuser counts as super_admin; a user with no role can do nothing.
     """
@@ -20,7 +20,7 @@ class IsSuperAdminOrReadOnlyRole(BasePermission):
         if request.method in SAFE_METHODS:
             return True
         if getattr(view, "action", None) == "create":
-            return role in (SUPER_ADMIN, UPLOADER)
+            return role in (SUPER_ADMIN, MEMBER)
         return role == SUPER_ADMIN
 
 
