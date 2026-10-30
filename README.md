@@ -23,14 +23,19 @@ use something like Syncthing.)
   box art in `ROMS/<SYSTEM>/Imgs/`, on a folder, an NFS share or an S3-compatible bucket. A scan every
   15 minutes indexes it in place. birdROMs never deletes, moves, renames or overwrites your files.
 - **Uploads** from the browser go into the right system folder (unknown platforms go to
-  `ROMS/_UNSORTED`). Any signed-in user can upload and create playlists.
+  `ROMS/_UNSORTED`). Pick a file, or drag one or more ROM files anywhere onto the Library page; they upload
+  one at a time and a failed file does not stop the rest. Members and admins can upload; any signed-in
+  user can create playlists.
+- **Search and filter.** Search the library by title or file name, filter by platform, and page through
+  the grid.
 - **Titles are display-only.** `Super Mario World (USA) [!].sfc` shows as a clean title with its tags, but
   downloads always use the original file name, because muOS and RetroArch key saves, states and box art
   to it.
 - **Cover art** comes from the library first, then libretro-thumbnails and ScreenScraper in the
   background.
-- **Playlists**, platform detection from folder names and extensions, and an installable web app (PWA,
-  needs HTTPS).
+- **Playlists**, built on the Playlists page or with **Add to playlist** on a game card. You can reorder
+  them. Platform detection comes from folder names and extensions, and the site is an installable web app
+  (PWA, needs HTTPS).
 - **Private.** Every download goes through a permission-checked API that streams the file, even from S3.
   There is no public URL for a ROM or its cover.
 
