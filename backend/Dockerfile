@@ -25,11 +25,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH" \
     MEDIA_ROOT=/data/media \
     STATIC_ROOT=/app/staticfiles
-# The app user. 568:568 is TrueNAS's built-in `apps` account, so files on a TrueNAS share are
-# owned the same as other apps' (e.g. Plex). In prod, set PUID/PGID at runtime to change it
-# (see docker-entrypoint.sh); the build args change the image's default user.
-ARG APP_UID=568
-ARG APP_GID=568
+# The app user. 1000:1000 is the usual first account on a Linux host. In prod, set PUID/PGID
+# at runtime to change it (see docker-entrypoint.sh); the build args change the image's default user.
+# TrueNAS's `apps` account is 568; set PUID=568 PGID=568 for a share owned by that account.
+ARG APP_UID=1000
+ARG APP_GID=1000
 RUN groupadd --system --gid ${APP_GID} birdroms && useradd --system --uid ${APP_UID} --gid ${APP_GID} --home /app birdroms \
     && mkdir -p /data/media /library /app/staticfiles && chown -R birdroms:birdroms /data /library /app
 WORKDIR /app
@@ -45,7 +45,7 @@ CMD ["sh", "-c", "python manage.py migrate --noinput && exec python manage.py ru
 FROM base AS prod
 COPY --chown=birdroms:birdroms . /app
 RUN chmod +x /app/docker-entrypoint.sh
-# Starts as root only so the entrypoint can switch to PUID/PGID (default 568:568) and drop
+# Starts as root only so the entrypoint can switch to PUID/PGID (default 1000:1000) and drop
 # privileges before anything else runs; `user:` in compose works too.
 VOLUME ["/data/media"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \

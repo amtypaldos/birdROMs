@@ -42,17 +42,17 @@ choose otherwise (for example `LIBRARY_BACKEND=filesystem` with `LIBRARY_ROOT`).
 
 ## Docker
 
-- The containers run as uid 568 and mount the library at `/library`. A `birdroms_library` volume
+- The containers run as uid 1000 (set `PUID`/`PGID` to match the library; TrueNAS `apps` is 568) and mount the library at `/library`. A `birdroms_library` volume
   created before this change is still owned by root, so uploads and cover saving fail. Fix it once
   with
-  `docker compose -f docker-compose.prod.yml run --rm --no-deps --user root backend chown -R 568:568 /library`,
+  `docker compose -f docker-compose.prod.yml run --rm --no-deps --user root backend chown -R 1000:1000 /library`,
   or remove the volume and let Compose recreate it (only if it holds nothing you need).
-- The app user changed from uid/gid 999 to 568 (TrueNAS's `apps` account). Pick another at
+- The image default is uid/gid 1000. Older images used 999, then 568 (TrueNAS's `apps` account). Pick another at
   runtime with `PUID`/`PGID` in `backend/.env` (or compose `user:`); `PUID=999 PGID=999` keeps
   the old owner and needs no chown. Volumes written by an older
-  image are owned by 999: give them to the new user once with
-  `docker compose -f docker-compose.prod.yml run --rm --no-deps --user root backend chown -R 568:568 /data/media /library`.
-- For a library on an NFS share, uid 568 needs write access to the export. If you don't want
+  image are owned by that older uid: give them to the user you run as once with
+  `docker compose -f docker-compose.prod.yml run --rm --no-deps --user root backend chown -R 1000:1000 /data/media /library`.
+- For a library on an NFS share, that uid needs write access to the export. If you don't want
   birdROMs to write there at all, set `LIBRARY_READ_ONLY=true` (uploads and cover saving are then
   turned off).
 

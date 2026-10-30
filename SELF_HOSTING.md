@@ -85,7 +85,7 @@ repo-root `.env` file, which Compose reads automatically:
 | `NGINX_CLIENT_MAX_BODY_SIZE` | `2g` | nginx upload limit. Keep it at least `MAX_ROM_UPLOAD_BYTES`. |
 | `BIRDROMS_ENV_FILE` | `./backend/.env` | App env file |
 | `BIRDROMS_BACKEND_IMAGE` / `BIRDROMS_WEB_IMAGE` | `birdroms-backend:latest` / `birdroms-web:latest` | Image tags to build or pull. Set them to `ghcr.io/amtypaldos/birdroms-backend:latest` and `ghcr.io/amtypaldos/birdroms-web:latest` for the prebuilt amd64/arm64 images (see [docs/deploying.md](docs/deploying.md#1-images)). |
-| `PUID` / `PGID` | `568` | User and group the backend and worker run as; set in `backend/.env`. Match the owner of your library folder. |
+| `PUID` / `PGID` | `1000` | User and group the backend and worker run as; set in `backend/.env`. Match the owner of your library folder. TrueNAS `apps` is 568. |
 
 ## 3. Start the stack
 
@@ -187,8 +187,8 @@ writes new uploads and scraped cover art into it.
 page, or copy files into the volume.
 
 **A folder on the host:** in `docker-compose.prod.yml` replace `birdroms_library:/library` with a bind
-mount such as `/srv/roms:/library`. The container runs as `PUID`:`PGID` (default `568:568`), which must be
-able to write there: `chown -R 568:568 /srv/roms`, or set `PUID`/`PGID` in `backend/.env` to the folder's
+mount such as `/srv/roms:/library`. The container runs as `PUID`:`PGID` (default `1000:1000`), which must be
+able to write there: `chown -R 1000:1000 /srv/roms`, or set `PUID`/`PGID` in `backend/.env` to the folder's
 owner. If you never want birdROMs to write to your library, set `LIBRARY_READ_ONLY=true` (uploads and
 cover write-back are then off).
 
@@ -249,7 +249,7 @@ After deploying or upgrading, run through [the smoke test](docs/deploying.md#7-s
 - **`413 Request Entity Too Large` on upload:** raise `NGINX_CLIENT_MAX_BODY_SIZE` and your
   outer proxy's limit, along with `MAX_ROM_UPLOAD_BYTES`.
 - **Uploads fail with "permission denied" or the library page says it is read-only:** the container
-  user (`PUID`:`PGID`, default `568:568`) cannot write to the library. Fix the folder's ownership or
+  user (`PUID`:`PGID`, default `1000:1000`) cannot write to the library. Fix the folder's ownership or
   change `PUID`/`PGID`; see [step 7](#7-your-rom-library-volume-host-folder-nfs-or-s3).
 - **A scan aborted with a safety warning:** it would have hidden more than 25% of your ROMs, which
   usually means the library is not mounted. Check the mount first; see

@@ -81,17 +81,18 @@ is wrong; with `access denied`, the server's export list does not include this h
 fixed when the volume is created: to change them run `docker compose down`, then
 `docker volume rm <project>_birdroms_library`, then start again.
 
-**Write access.** The app runs as `PUID`:`PGID` (default 568:568, TrueNAS's `apps` account; set
-them in `backend/.env`, or use compose `user:`) and must be able to create files in the library
-(uploads, covers). The entrypoint never changes the library's ownership. Check it before the first start, with the share mounted:
+**Write access.** The app runs as `PUID`:`PGID` (default 1000:1000; set them in `backend/.env`,
+or use compose `user:`) and must be able to create files in the library (uploads, covers).
+TrueNAS's `apps` account is 568, so set `PUID=568` and `PGID=568` for a share owned by that account.
+The entrypoint never changes the library's ownership. Check it before the first start, with the share mounted:
 
 ```bash
-docker run --rm -u 568:568 -v <project>_birdroms_library:/library alpine \
+docker run --rm -u 1000:1000 -v <project>_birdroms_library:/library alpine \
   sh -c 'touch /library/.write-test && rm /library/.write-test && echo writable'
 ```
 
-If it is not writable, either change the export (squash all clients to uid/gid 568, e.g.
-`all_squash,anonuid=568,anongid=568`), `chown`/`chmod` the folders on the server, or run read-only
+If it is not writable, either change the export (squash all clients to the app uid/gid, e.g.
+`all_squash,anonuid=1000,anongid=1000`), `chown`/`chmod` the folders on the server, or run read-only
 with `LIBRARY_READ_ONLY=true` (uploads and cover write-back are then off). A stale-mount NAS
 outage cannot make birdROMs mark everything missing: a scan that would hide more than 25% of the
 known ROMs aborts (see [Scans](#first-scan)).
@@ -107,7 +108,7 @@ See [upgrading-to-the-library.md](upgrading-to-the-library.md).
 The default `birdroms_library` volume works without any override; put ROMs in it with the upload
 page or by copying into the volume. To use an existing folder on the host instead, replace
 `birdroms_library:/library` in `docker-compose.prod.yml` with a bind mount (for example
-`/srv/roms:/library`) and give it to the app user (`chown -R 568:568 /srv/roms`, or set `PUID`/`PGID`
+`/srv/roms:/library`) and give it to the app user (`chown -R 1000:1000 /srv/roms`, or set `PUID`/`PGID`
 to the folder's owner).
 
 ## 4. Reverse proxy and TLS
@@ -251,7 +252,7 @@ many new PNGs in the library's `Imgs/` folders. Set `LIBRARY_WRITE_COVERS=False`
 
   The volume name is `<project>_birdroms_media`; the project defaults to the directory name, so
   check `docker volume ls`. After restoring one, give the files back to the app user
-  (`chown -R 568:568 /data`, or your `PUID:PGID`).
+  (`chown -R 1000:1000 /data`, or your `PUID:PGID`).
 - **The env file** holds your secrets; keep a copy somewhere private.
 
 ## 9. Updating and rolling back
