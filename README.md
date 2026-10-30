@@ -218,9 +218,9 @@ platforms and press Start. Device tokens are read-only and revocable.
 ![The Handheld page: install steps and a box for the pairing code](docs/images/handheld.png)
 
 A paired device updates itself from the package published on your server, not from GitHub. The backend
-image build downloads `birdROMs.muxapp` from the `amtypaldos/birdroms-handheld` release with the same tag
-as the server tag, or the latest release for a branch build. `python manage.py publish_handheld` is the
-manual fallback. Details: [docs/handheld-app.md](docs/handheld-app.md).
+image bundles the handheld release named in [`handheld-version`](handheld-version). The server's own
+release tag does not have to match it. `python manage.py publish_handheld` is the manual fallback.
+Details: [docs/handheld-app.md](docs/handheld-app.md).
 
 ## Development
 

@@ -11,10 +11,12 @@ in (your public https address, not `localhost`).
 
 ## Publish a new version
 
-A server release tag (`v2026.10.29.2`) downloads `birdROMs.muxapp` from the handheld release of the
-**same tag** while the image builds. On startup the container copies that file into the media volume
-when it differs from what is already published. Tag the handheld repo first, wait for its release,
-then tag the server with the same name.
+The file [`handheld-version`](../handheld-version) names the handheld release the image bundles
+(for example `v2026.10.29.2`). A push to `main` and a server release tag both download that
+release. On startup the container copies the file into the media volume when it differs from
+what is already published. Tag the handheld repo when the app changes, set `handheld-version`
+to that tag, then tag this repo when the image should ship. A site-only release leaves the pin
+as it is. See [CONTRIBUTING.md](../CONTRIBUTING.md#releases).
 
 Until the handheld repo is public, add a secret `HANDHELD_RELEASE_TOKEN` on this repo that can read
 it. After it is public, the workflow token is enough.

@@ -79,5 +79,22 @@ yarn build
 - **No ROMs.** Do not commit ROM files, BIOS files or copyrighted game assets, including as test
   fixtures. Generate small synthetic files in tests instead.
 
+## Releases
+
+The server and the handheld app are released on their own. Both use date tags:
+`vYYYY.MM.DD`, and `vYYYY.MM.DD.N` when there is another release the same day.
+
+[`handheld-version`](handheld-version) in this repo names the handheld release bundled
+into the server image. A push to `main` and a server release tag both download
+`birdROMs.muxapp` from that release. The server's own tag does not have to match it.
+
+- The handheld app changed. Tag `birdroms-handheld` (`birdROMs handheld YYYY.MM.DD`).
+  When that GitHub release exists, set `handheld-version` to the same tag. Tag this
+  repo (`birdROMs YYYY.MM.DD`) when that image should ship.
+- Only the site changed. Tag this repo and leave `handheld-version` as it is.
+
+Paired devices update from the package published on the server, not from GitHub.
+See [docs/handheld-app.md](docs/handheld-app.md).
+
 By contributing, you agree that your contributions are licensed under the project's
 [MIT License](LICENSE).
