@@ -10,7 +10,7 @@ vi.mock("./api/client", () => ({
   api: {
     oidcLoginUrl: "/api/auth/oidc/login/",
     handheldInfo: vi.fn(() => Promise.resolve({ available: false })),
-    authConfig: vi.fn(() => Promise.resolve({ methods: ["local"] })),
+    authConfig: vi.fn(() => Promise.resolve({ methods: ["local"], invites: true })),
     me: vi.fn(() => Promise.resolve({ id: 1, username: "alice", email: "", role: "readonly" })),
     login: vi.fn(),
     register: vi.fn(),
@@ -253,7 +253,6 @@ describe("App", () => {
 
     expect(await screen.findByText("grace")).toBeInTheDocument();
     expect(screen.getByText(/super_admin/)).toBeInTheDocument();
-    expect(api.authConfig).not.toHaveBeenCalled();
     expect(localStorage.length).toBe(0);
   });
 
@@ -911,7 +910,21 @@ describe("invite links", () => {
     await screen.findByPlaceholderText("Username");
     expect(api.checkInvite).toHaveBeenCalledWith("abc-123_XYZ");
     expect(screen.queryByRole("heading", { name: "Login" })).not.toBeInTheDocument();
-    expect(api.authConfig).not.toHaveBeenCalled();
+  });
+
+  it("shows no accept form, and never checks the token, when invites are off on this server", async () => {
+    signedOutOnce();
+    openInvite();
+    api.authConfig.mockResolvedValueOnce({ methods: ["oidc"], registration: false, invites: false });
+
+    render(<App />);
+
+    expect(await screen.findByText("Invite links are not available on this server.")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Username")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create account" })).not.toBeInTheDocument();
+    expect(api.checkInvite).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Go to login" }));
+    expect(await screen.findByRole("heading", { name: "Login" })).toBeInTheDocument();
   });
 
   it("accepts the invite, signs in with the session and lands in the library", async () => {
@@ -1036,15 +1049,31 @@ describe("creating invites", () => {
     expect(screen.queryByText("Invite a friend")).not.toBeInTheDocument();
   });
 
-  it("explains when invites are unavailable because local login is off", async () => {
+  it("does not offer invites to an admin when the server reports invites off", async () => {
     api.me.mockResolvedValueOnce({ id: 2, username: "root", email: "", role: "super_admin" });
-    api.createInvite.mockRejectedValueOnce(Object.assign(new Error("Not found."), { status: 404 }));
+    api.authConfig.mockResolvedValueOnce({ methods: ["oidc"], registration: false, invites: false });
     render(<App />);
 
-    fireEvent.click(await screen.findByText("Invite a friend"));
-    fireEvent.click(screen.getByRole("button", { name: "Create invite link" }));
+    expect(await screen.findByRole("heading", { name: "Upload ROM" })).toBeInTheDocument();
+    await waitFor(() => expect(api.authConfig).toHaveBeenCalled());
+    await act(async () => {}); // let the config answer land before asserting the form stayed hidden
+    expect(screen.queryByText("Invite a friend")).not.toBeInTheDocument();
+  });
 
-    expect(await screen.findByText(/local login, which is turned off/)).toBeInTheDocument();
-    expect(screen.queryByLabelText("Invite link")).not.toBeInTheDocument();
+  it("does not offer invites while the config is still loading, or if it cannot be read", async () => {
+    api.me.mockResolvedValueOnce({ id: 2, username: "root", email: "", role: "super_admin" });
+    api.authConfig.mockReturnValueOnce(new Promise(() => {}));
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Upload ROM" })).toBeInTheDocument();
+    expect(screen.queryByText("Invite a friend")).not.toBeInTheDocument();
+  });
+
+  it("offers invites to an admin when local login is on, even with self-registration closed", async () => {
+    api.me.mockResolvedValueOnce({ id: 2, username: "root", email: "", role: "super_admin" });
+    api.authConfig.mockResolvedValueOnce({ methods: ["local"], registration: false, invites: true });
+    render(<App />);
+
+    expect(await screen.findByText("Invite a friend")).toBeInTheDocument();
   });
 });

@@ -660,14 +660,17 @@ export default function App() {
     else setLoading(false);
   }, [authed, loadRoms]);
 
+  // The public config drives the login card, the invite page and (signed in) the invite form, so it loads
+  // whenever the sign-in state is known. When the server could not be reached it is fetched again once the
+  // connection returns (`offline` clears).
   useEffect(() => {
-    if (!authed && sessionKnown && !inviteToken && !authConfig) {
+    if ((authed || sessionKnown) && !authConfig && !offline) {
       api.authConfig().then(setAuthConfig, (err) => {
         if (isNetworkError(err)) setOffline(true);
         else setError(String(err.message || err));
       });
     }
-  }, [authed, sessionKnown, inviteToken, authConfig]);
+  }, [authed, sessionKnown, authConfig, offline]);
 
   useEffect(() => {
     const sync = () => setView(viewFromHash());
@@ -752,7 +755,7 @@ export default function App() {
             <p className="muted loading-text">Checking your session…</p>
           </section>
         ) : null}
-        {inviteToken ? <InviteAcceptPanel token={inviteToken} onAccepted={inviteAccepted} onDone={leaveInvite} /> : null}
+        {inviteToken ? <InviteAcceptPanel token={inviteToken} invites={authConfig ? authConfig.invites === true : null} onAccepted={inviteAccepted} onDone={leaveInvite} /> : null}
         {pairing && sessionKnown ? <ApprovePanel code={pairing.code} authed={authed} onDone={leavePairing} /> : null}
         {!authed && sessionKnown && !inviteToken ? <AuthPanel config={authConfig} onAuthed={checkSession} /> : null}
         {showApp ? (
@@ -763,7 +766,7 @@ export default function App() {
             ) : null}
             {view === "handheld" ? <HandheldView /> : null}
             {view === "library" ? <LibraryStatusPanel me={me} /> : null}
-            {view === "library" && canWrite ? <InviteCreator /> : null}
+            {view === "library" && canWrite && authConfig?.invites === true ? <InviteCreator /> : null}
             {view === "library" && canUpload ? <GlobalDropzone onUploaded={loadRoms} /> : null}
             {view === "library" && canUpload ? <UploadPanel onUploaded={loadRoms} /> : null}
             {view === "library" ? (
