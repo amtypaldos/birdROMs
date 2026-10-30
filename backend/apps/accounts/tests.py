@@ -231,12 +231,12 @@ class AuthConfigTests(APITestCase):
     def test_local_only(self):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data, {"methods": ["local"], "registration": False})
+        self.assertEqual(response.data, {"methods": ["local"], "registration": False, "invites": True})
 
     @override_settings(AUTH_METHODS={"local"}, ALLOW_LOCAL_LOGIN=False, ALLOW_REGISTRATION=True)
     def test_registration_true_when_local_login_and_registration_open(self):
         response = self.client.get(self.url)
-        self.assertEqual(response.data, {"methods": ["local"], "registration": True})
+        self.assertEqual(response.data, {"methods": ["local"], "registration": True, "invites": True})
 
     @override_settings(AUTH_METHODS={"oidc"}, ALLOW_LOCAL_LOGIN=False, ALLOW_REGISTRATION=True, OIDC=OIDC_TEST_CONFIG)
     def test_registration_false_when_local_login_is_off(self):
@@ -249,6 +249,22 @@ class AuthConfigTests(APITestCase):
         self.assertIs(self.client.get(self.url).data["registration"], False)
         RegistrationSettings.objects.update_or_create(pk=1, defaults={"allow_registration": True})
         self.assertIs(self.client.get(self.url).data["registration"], True)
+
+    @override_settings(AUTH_METHODS={"local"}, ALLOW_LOCAL_LOGIN=True, ALLOW_REGISTRATION=True)
+    def test_invites_true_when_local_login_is_on(self):
+        self.assertIs(self.client.get(self.url).data["invites"], True)
+
+    @override_settings(AUTH_METHODS={"oidc"}, ALLOW_LOCAL_LOGIN=False, ALLOW_REGISTRATION=True, OIDC=OIDC_TEST_CONFIG)
+    def test_invites_false_when_local_login_is_off(self):
+        self.assertIs(self.client.get(self.url).data["invites"], False)
+
+    @override_settings(AUTH_METHODS={"local"}, ALLOW_LOCAL_LOGIN=True)
+    def test_invites_do_not_depend_on_self_registration(self):
+        for allow in (True, False):
+            with self.subTest(allow_registration=allow), override_settings(ALLOW_REGISTRATION=allow):
+                data = self.client.get(self.url).data
+                self.assertIs(data["registration"], allow)
+                self.assertIs(data["invites"], True)
 
     @override_settings(AUTH_METHODS={"oidc"}, ALLOW_LOCAL_LOGIN=False, OIDC=OIDC_TEST_CONFIG)
     def test_oidc_only(self):

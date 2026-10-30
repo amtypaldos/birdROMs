@@ -3,6 +3,7 @@ import { api } from "./api/client";
 
 const INVITE_PREFIX = "/invite/";
 export const INVITE_UNAVAILABLE = "This invite link is invalid, expired or already used.";
+export const INVITES_OFF = "Invite links are not available on this server.";
 
 // An invite link is `/invite/<token>`. The token stays in the path and is only ever POSTed, never put in a query string.
 export function inviteTokenFromPath(pathname = window.location.pathname) {
@@ -16,7 +17,8 @@ export function inviteTokenFromPath(pathname = window.location.pathname) {
 }
 
 // What a friend sees at `/invite/<token>`: pick a username and password; success signs them in with a session.
-export function InviteAcceptPanel({ token, onAccepted, onDone }) {
+// `invites` is the server's auth-config flag: null while unknown, false when invites cannot be used (no check is made).
+export function InviteAcceptPanel({ token, invites = true, onAccepted, onDone }) {
   const [state, setState] = useState("checking"); // checking | ready | unavailable
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
@@ -25,6 +27,7 @@ export function InviteAcceptPanel({ token, onAccepted, onDone }) {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    if (invites !== true) return undefined;
     let cancelled = false;
     api.checkInvite(token).then(
       () => {
@@ -38,7 +41,7 @@ export function InviteAcceptPanel({ token, onAccepted, onDone }) {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, invites]);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -60,14 +63,20 @@ export function InviteAcceptPanel({ token, onAccepted, onDone }) {
     <section className="card auth-card">
       <p className="eyebrow" aria-hidden="true">Player 2 joined?</p>
       <h2>Join birdROMs</h2>
-      {state === "checking" ? <p className="muted loading-text">Checking your invite…</p> : null}
-      {state === "unavailable" ? (
+      {invites === false ? (
+        <div className="stack">
+          <p className="error" role="alert">{INVITES_OFF}</p>
+          <button className="ghost" onClick={onDone}>Go to login</button>
+        </div>
+      ) : null}
+      {invites !== false && state === "checking" ? <p className="muted loading-text">Checking your invite…</p> : null}
+      {invites !== false && state === "unavailable" ? (
         <div className="stack">
           <p className="error" role="alert">{INVITE_UNAVAILABLE}</p>
           <button className="ghost" onClick={onDone}>Go to login</button>
         </div>
       ) : null}
-      {state === "ready" ? (
+      {invites !== false && state === "ready" ? (
         <form className="stack" onSubmit={handleSubmit}>
           <p className="muted">Choose a username and password to create your account.</p>
           <input

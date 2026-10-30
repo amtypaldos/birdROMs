@@ -78,14 +78,15 @@ def csrf(request):
 
 
 class AuthConfigView(APIView):
-    """Public: which login methods the SPA should offer."""
+    """Public: which login methods the SPA should offer, and whether invite links can be used."""
 
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
 
     def get(self, request):
         methods = enabled_methods()
-        data = {"methods": methods, "registration": registration_enabled()}
+        # Invites ride on local login (their endpoints 404 without it) and are independent of self-registration.
+        data = {"methods": methods, "registration": registration_enabled(), "invites": local_login_enabled()}
         if "oidc" in methods:
             data["oidc"] = {"provider_name": settings.OIDC["PROVIDER_NAME"], "login_url": reverse("oidc-login")}
         return Response(data)

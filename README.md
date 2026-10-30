@@ -124,6 +124,8 @@ shows only what is on.
   `INVITE_TTL_DAYS` (default 7), and can be revoked (`DELETE /api/auth/invites/<id>/`, or in Django admin).
   Only a SHA-256 digest of the token is stored, so the link is shown once at creation and cannot be
   recovered. The friend picks a username and password and is signed in. The default role is `readonly`.
+  Invites need local login: with it off, the web UI hides **Invite a friend** and `/invite/<token>` shows
+  that invite links are unavailable (`GET /api/auth/config/` reports this as `invites`).
 - **SSO** is one OpenID Connect provider (Pocket ID, Authentik, Keycloak, Authelia, Google) using the
   Authorization Code flow with PKCE. Members of `OIDC_ADMIN_GROUP` (from the `OIDC_GROUPS_CLAIM` claim)
   become `super_admin`. Otherwise members of the optional `OIDC_MEMBER_GROUP` become `member` (leave it
