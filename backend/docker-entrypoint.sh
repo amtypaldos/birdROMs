@@ -4,13 +4,14 @@
 # anything else (e.g. `python manage.py createsuperuser`) is run as-is.
 set -e
 
-# Run as PUID:PGID (default 568:568, TrueNAS's `apps` account). Started as root (the image
-# default), the entrypoint gives the app's own folders to that user and drops privileges. Started
-# with compose `user:` / `docker run --user`, it already runs as that user and skips this.
+# Run as PUID:PGID (default 1000:1000, the usual first account on a Linux host). Started as root
+# (the image default), the entrypoint gives the app's own folders to that user and drops privileges.
+# Started with compose `user:` / `docker run --user`, it already runs as that user and skips this.
 # The library (/library, often an NFS share) is never chowned: that user needs write access there.
+# TrueNAS's `apps` account is 568; set PUID=568 PGID=568 for a share owned by that account.
 if [ "$(id -u)" = "0" ]; then
-    PUID="${PUID:-568}"
-    PGID="${PGID:-568}"
+    PUID="${PUID:-1000}"
+    PGID="${PGID:-1000}"
     for dir in /data/media /app/staticfiles; do
         if [ -d "$dir" ] && [ "$(stat -c %u:%g "$dir")" != "$PUID:$PGID" ]; then
             chown -R "$PUID:$PGID" "$dir"
@@ -21,8 +22,11 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 # The image may contain the handheld release that matches this server version.
-# The media directory is a volume, so copy it into place when it is new.
-python manage.py install_bundled_handheld
+# Copy it into the media volume when starting the app or another Python command.
+# A shell probe (`docker run … sh -c id`) must not load Django: it has no secret key.
+if [ "$1" = "gunicorn" ] || [ "$1" = "python" ]; then
+    python manage.py install_bundled_handheld
+fi
 
 if [ "$1" = "gunicorn" ]; then
     python manage.py migrate --noinput

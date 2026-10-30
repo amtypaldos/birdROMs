@@ -38,7 +38,7 @@ x-backend-common: &backend-common
     - birdroms_media:/data/media
     # The ROM library, shared so the worker's scheduled scans see what the backend sees. To use an
     # existing host folder, replace this with a bind mount (e.g. /srv/roms:/library). The app user
-    # (PUID:PGID, default 568:568) needs write access: on NFS set the export's ownership
+    # (PUID:PGID, default 1000:1000) needs write access: on NFS set the export's ownership
     # accordingly, or set LIBRARY_READ_ONLY=true. Upgrading? See docs/upgrading-to-the-library.md.
     - birdroms_library:/library
 
