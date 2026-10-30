@@ -33,8 +33,9 @@ use something like Syncthing.)
   to it.
 - **Cover art** comes from the library first, then libretro-thumbnails and ScreenScraper in the
   background.
-- **Playlists** you build on the Playlists page or with **Add to playlist** on any game card, and reorder.
-  Platform detection from folder names and extensions, and an installable web app (PWA, needs HTTPS).
+- **Playlists**, built on the Playlists page or with **Add to playlist** on a game card. You can reorder
+  them. Platform detection comes from folder names and extensions, and the site is an installable web app
+  (PWA, needs HTTPS).
 - **Private.** Every download goes through a permission-checked API that streams the file, even from S3.
   There is no public URL for a ROM or its cover.
 
