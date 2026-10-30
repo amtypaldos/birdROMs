@@ -520,6 +520,7 @@ function ApprovePanel({ code, authed, onDone }) {
 }
 
 const SUPER_ADMIN = "super_admin";
+const MEMBER = "member";
 
 function SessionBar({ me, offline, onLogout }) {
   return (
@@ -729,8 +730,10 @@ export default function App() {
     setPairing(null);
   }
 
-  // Write controls are only rendered for super_admin, and not until the role is known.
+  // Edit/scrape/library controls are super_admin only; uploading is also open to members.
+  // Neither is rendered until the role is known.
   const canWrite = me?.role === SUPER_ADMIN;
+  const canUpload = canWrite || me?.role === MEMBER;
   const showApp = authed && !pairing && !inviteToken;
 
   return (
@@ -761,8 +764,8 @@ export default function App() {
             {view === "handheld" ? <HandheldView /> : null}
             {view === "library" ? <LibraryStatusPanel me={me} /> : null}
             {view === "library" && canWrite ? <InviteCreator /> : null}
-            {view === "library" && canWrite ? <GlobalDropzone onUploaded={loadRoms} /> : null}
-            {view === "library" && canWrite ? <UploadPanel onUploaded={loadRoms} /> : null}
+            {view === "library" && canUpload ? <GlobalDropzone onUploaded={loadRoms} /> : null}
+            {view === "library" && canUpload ? <UploadPanel onUploaded={loadRoms} /> : null}
             {view === "library" ? (
             <RomList
               romPage={romPage}

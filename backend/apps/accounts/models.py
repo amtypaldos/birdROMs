@@ -123,7 +123,7 @@ class Invite(models.Model):
     Only the SHA-256 digest of the token is stored; the raw token is shown to the admin once, at creation.
     """
 
-    ROLE_CHOICES = [("readonly", "readonly"), ("super_admin", "super_admin")]
+    ROLE_CHOICES = [("readonly", "readonly"), ("member", "member"), ("super_admin", "super_admin")]
 
     token_hash = models.CharField(max_length=64, unique=True, editable=False)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="readonly")

@@ -1,25 +1,27 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
-from apps.accounts.services import SUPER_ADMIN, user_role
+from apps.accounts.services import MEMBER, SUPER_ADMIN, user_role
 
 
 class IsSuperAdminOrReadOnlyRole(BasePermission):
     """
-    super_admin group can write.
-    readonly group can only read.
-    Exception: any authenticated user may upload (create) a ROM.
+    Reads (list, search, download, covers): readonly, member, super_admin.
+    Upload (the `create` action): member and super_admin.
+    Every other write (edit, delete, scrape): super_admin only.
+    A Django superuser counts as super_admin; a user with no role can do nothing.
     """
 
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
-        # Deliberate loosening for a trusted friend group: uploads are open to every signed-in
-        # user. RBAC is deferred; re-tighten here (drop this branch) when roles are enforced.
-        if getattr(view, "action", None) == "create":
-            return True
+        role = user_role(request.user)
+        if role is None:
+            return False
         if request.method in SAFE_METHODS:
-            return request.user.groups.filter(name__in=["readonly", "super_admin"]).exists() or request.user.is_superuser
-        return request.user.is_superuser or request.user.groups.filter(name="super_admin").exists()
+            return True
+        if getattr(view, "action", None) == "create":
+            return role in (SUPER_ADMIN, MEMBER)
+        return role == SUPER_ADMIN
 
 
 class IsPlaylistOwnerOrReadOnly(BasePermission):

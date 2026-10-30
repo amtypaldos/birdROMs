@@ -408,6 +408,47 @@ class MeTests(APITestCase):
         self.assertIsNone(self.client.get(self.url).data["role"])
 
 
+class RoleResolutionTests(APITestCase):
+    def test_user_role_for_each_group(self):
+        for role in ("super_admin", "member", "readonly"):
+            user = User.objects.create_user(username=f"u-{role}")
+            set_role(user, role)
+            self.assertEqual(user_role(user), role)
+        self.assertIsNone(user_role(User.objects.create_user(username="nobody")))
+
+    def test_most_powerful_group_wins_when_in_several(self):
+        user = User.objects.create_user(username="multi")
+        for name in ("readonly", "member"):
+            user.groups.add(Group.objects.get_or_create(name=name)[0])
+        self.assertEqual(user_role(user), "member")
+        user.groups.add(Group.objects.get_or_create(name="super_admin")[0])
+        self.assertEqual(user_role(user), "super_admin")
+
+    def test_django_superuser_is_super_admin(self):
+        self.assertEqual(user_role(User.objects.create_superuser(username="root", password="pw-123456")), "super_admin")
+
+    def test_set_role_leaves_exactly_one_role_group(self):
+        user = User.objects.create_user(username="mover")
+        for name in ("super_admin", "readonly"):
+            user.groups.add(Group.objects.get_or_create(name=name)[0])
+        set_role(user, "member")
+        self.assertEqual(list(user.groups.values_list("name", flat=True)), ["member"])
+        set_role(user, "readonly")
+        self.assertEqual(list(user.groups.values_list("name", flat=True)), ["readonly"])
+
+    def test_set_role_keeps_unrelated_groups(self):
+        user = User.objects.create_user(username="keeper")
+        user.groups.add(Group.objects.get_or_create(name="book-club")[0])
+        set_role(user, "member")
+        self.assertEqual(sorted(user.groups.values_list("name", flat=True)), ["book-club", "member"])
+
+    def test_me_reports_member(self):
+        user = User.objects.create_user(username="up")
+        set_role(user, "member")
+        self.client.force_authenticate(user)
+        self.assertEqual(self.client.get(reverse("me")).data["role"], "member")
+
+
 def fake_oidc_client(claims, userinfo=None):
     client = mock.Mock()
     client.authorize_redirect.return_value = HttpResponseRedirect("https://id.example.com/authorize?state=abc")
@@ -499,6 +540,43 @@ class OIDCFlowTests(APITestCase):
     def test_admin_group_claim_maps_to_super_admin(self):
         self.signed_in(self.callback(self.claims(groups=["birdroms-admins", "other"])))
         self.assertEqual(user_role(User.objects.get(username="grace")), "super_admin")
+
+    @override_settings(OIDC={**OIDC_TEST_CONFIG, "MEMBER_GROUP": "birdroms-members"})
+    def test_upload_group_claim_maps_to_member(self):
+        self.signed_in(self.callback(self.claims(groups=["birdroms-members"])))
+        user = User.objects.get(username="grace")
+        self.assertEqual(user_role(user), "member")
+        self.assertEqual(list(user.groups.values_list("name", flat=True)), ["member"])
+
+    @override_settings(OIDC={**OIDC_TEST_CONFIG, "MEMBER_GROUP": "birdroms-members"})
+    def test_admin_group_wins_over_upload_group(self):
+        self.signed_in(self.callback(self.claims(groups=["birdroms-members", "birdroms-admins"])))
+        self.assertEqual(user_role(User.objects.get(username="grace")), "super_admin")
+
+    @override_settings(OIDC={**OIDC_TEST_CONFIG, "MEMBER_GROUP": "birdroms-members"})
+    def test_user_outside_both_groups_stays_readonly(self):
+        self.signed_in(self.callback(self.claims(groups=["other"])))
+        self.assertEqual(user_role(User.objects.get(username="grace")), "readonly")
+
+    @override_settings(OIDC={**OIDC_TEST_CONFIG, "MEMBER_GROUP": "birdroms-members"})
+    def test_upload_role_is_resynced_when_membership_is_removed(self):
+        self.callback(self.claims(groups=["birdroms-members"]))
+        self.signed_in(self.callback(self.claims(groups=[])))
+        self.assertEqual(user_role(User.objects.get(username="grace")), "readonly")
+
+    def test_unset_upload_group_never_assigns_member(self):
+        self.assertEqual(OIDC_TEST_CONFIG["MEMBER_GROUP"], "")
+        # Even a group literally named like the empty string or "member" grants nothing.
+        self.signed_in(self.callback(self.claims(groups=["", "member", "birdroms-members"])))
+        self.assertEqual(user_role(User.objects.get(username="grace")), "readonly")
+
+    def test_upload_group_setting_is_parsed_from_env(self):
+        config = parse_oidc_settings(
+            {"OIDC_ISSUER": "https://id.example.com", "OIDC_CLIENT_ID": "x", "OIDC_CLIENT_SECRET": "y",
+             "OIDC_REDIRECT_URI": "http://t/cb", "OIDC_MEMBER_GROUP": " birdroms-members "},
+            {"oidc"},
+        )
+        self.assertEqual(config["MEMBER_GROUP"], "birdroms-members")
 
     def test_groups_claim_fetched_from_userinfo_when_missing_from_id_token(self):
         claims = self.claims()

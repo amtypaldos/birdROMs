@@ -99,6 +99,7 @@ def parse_oidc_settings(env, methods) -> dict:
         "SCOPES": env.get("OIDC_SCOPES", "").strip() or DEFAULT_OIDC_SCOPES,
         "GROUPS_CLAIM": env.get("OIDC_GROUPS_CLAIM", "").strip() or "groups",
         "ADMIN_GROUP": env.get("OIDC_ADMIN_GROUP", "").strip(),
+        "MEMBER_GROUP": env.get("OIDC_MEMBER_GROUP", "").strip(),
         "LOGIN_REDIRECT_URL": env.get("OIDC_LOGIN_REDIRECT_URL", "").strip() or "/",
         "PROVIDER_NAME": env.get("OIDC_PROVIDER_NAME", "").strip() or "SSO",
         "ALLOWED_GROUPS": _parse_list(env, "OIDC_ALLOWED_GROUPS"),
