@@ -96,6 +96,17 @@ class HandheldInfoApiTests(TempHandheldCase, APITestCase):
         self.assertEqual(names, {"birdROMs/birdroms", "birdROMs/mux_launch.sh", "birdROMs/mux_lang.ini", "birdROMs/server.json"})
         self.assertEqual(seed, {"server_url": "http://testserver"})
 
+    def test_download_accepts_a_zip_accept_header(self):
+        # The handheld update asks for a zip, not JSON. DRF would 406 that otherwise.
+        self.target.parent.mkdir(parents=True)
+        build_muxapp(self.target)
+        self.client.force_authenticate(make_user("reader", "readonly"))
+        response = self.client.get(
+            reverse("handheld-download"),
+            HTTP_ACCEPT="application/zip, application/octet-stream",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
 
 class PersonalizedPackageTests(TempHandheldCase, SimpleTestCase):
     def test_replaces_an_existing_seed_and_keeps_other_entries(self):
