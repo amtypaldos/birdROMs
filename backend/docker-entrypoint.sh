@@ -26,6 +26,7 @@ fi
 # A shell probe (`docker run … sh -c id`) must not load Django: it has no secret key.
 if [ "$1" = "gunicorn" ] || [ "$1" = "python" ]; then
     python manage.py install_bundled_handheld
+    python manage.py install_bundled_handheld --platform switch
 fi
 
 if [ "$1" = "gunicorn" ]; then

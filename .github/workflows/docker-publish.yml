@@ -57,11 +57,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The backend image bundles the handheld release named in handheld-version
+      # The backend image bundles releases pinned in handheld-version and switch-version
       # (a tag and a branch build use the same pin). It waits a few minutes if that
       # release is still being packaged. The media directory is a volume, so the
       # entrypoint copies the file into place on start.
-      - name: Fetch the pinned handheld package
+      - name: Fetch the pinned handheld packages
         if: matrix.image == 'birdroms-backend'
         env:
           # This repo's token cannot read another private repo. Set HANDHELD_RELEASE_TOKEN
@@ -70,24 +70,27 @@ jobs:
           HANDHELD_REPO: ${{ github.repository_owner }}/birdroms-handheld
         run: |
           set -euo pipefail
-          tag="$(tr -d '[:space:]' < handheld-version)"
-          if [ -z "$tag" ]; then
-            echo "::error::handheld-version is empty"
-            exit 1
-          fi
-          download() {
-            gh release download "$1" --repo "$HANDHELD_REPO" --pattern 'birdROMs.muxapp' --dir backend --clobber
-          }
-          for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
-            if download "$tag"; then
-              echo "bundled handheld release $tag"
-              exit 0
+          fetch_package() {
+            local pin_file="$1" asset="$2"
+            local tag
+            tag="$(tr -d '[:space:]' < "$pin_file")"
+            if [[ ! "$tag" =~ ^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}(\.[0-9]+)?$ ]]; then
+              echo "::error::Invalid date release in $pin_file"
+              return 1
             fi
-            echo "waiting for $HANDHELD_REPO release $tag"
-            sleep 20
-          done
-          echo "::error::no birdROMs.muxapp on $HANDHELD_REPO release $tag (handheld-version)"
-          exit 1
+            for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              if gh release download "$tag" --repo "$HANDHELD_REPO" --pattern "$asset" --dir backend --clobber; then
+                echo "bundled $asset from handheld release $tag"
+                return 0
+              fi
+              echo "waiting for $HANDHELD_REPO release $tag ($asset)"
+              sleep 20
+            done
+            echo "::error::no $asset on $HANDHELD_REPO release $tag ($pin_file)"
+            return 1
+          }
+          fetch_package handheld-version birdROMs.muxapp
+          fetch_package switch-version birdROMs-switch.zip
 
       - name: Work out the image tags
         id: tags

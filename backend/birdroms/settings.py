@@ -131,6 +131,7 @@ MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", BASE_DIR / "media"))
 
 # The handheld app package users download (publish with `manage.py publish_handheld`).
 HANDHELD_APP_PATH = Path(os.getenv("HANDHELD_APP_PATH", MEDIA_ROOT / "handheld" / "birdROMs.muxapp"))
+SWITCH_APP_PATH = Path(os.getenv("SWITCH_APP_PATH", MEDIA_ROOT / "handheld" / "birdROMs-switch.zip"))
 
 # Default file storage for ROMs and cover art; see birdroms/storage.py and .env.example.
 STORAGES = build_storages(os.environ)
