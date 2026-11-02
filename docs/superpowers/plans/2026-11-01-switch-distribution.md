@@ -1,6 +1,6 @@
 # Self-hosted Switch Updates Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Serve versioned, token-free Switch archives from birdROMs and safely update the native app.
 
@@ -59,10 +59,20 @@ Files: handheld switch/source/{main,ui/app}.cpp, config storage, package scripts
 - [x] Automatic paired-server checking; B skips, ZL retries; update outcome returned to main.
 - [x] Resource cleanup precedes installation; restart or reopen fallback implemented.
 - [x] Real NRO packaged, personalized by Django, staged/installed by native host code; config remains writable.
-- [ ] Run final native suites, Switch build, frontend/backend checks and image build.
+- [x] Run final native suites, Switch build, frontend/backend checks and image build.
 
 ### Task 5: Review and delivery — coordinator + fresh reviewer
 
-- [ ] Review cross-repository contract, security, rollback/config preservation, frontend content and image pins.
-- [ ] Resolve Important/Critical findings with regression tests and re-review.
-- [ ] Record verification, history/completion logs and release artifacts without claiming physical updater verification.
+- [x] Review cross-repository contract, security, rollback/config preservation, frontend content and image pins.
+- [x] Resolve Important/Critical findings with regression tests and re-review.
+- [x] Record verification, history/completion logs and release artifacts without claiming physical updater verification.
+
+## Final verification
+
+Client release v2026.11.02: both Go and Switch jobs green. Server release
+v2026.11.02: multi-architecture image publish and backend/frontend CI green.
+615 Django + 161 frontend tests passed. Published-image browser and native
+updater smoke tests passed against an isolated database. Production services
+were upgraded to the pinned date tag and verified healthy. Existing runtime
+configuration and admin privileges were preserved. Physical updater testing
+remains explicitly pending.
