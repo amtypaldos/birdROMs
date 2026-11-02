@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import stat
+import struct
 import warnings
 import zipfile
 from pathlib import Path
@@ -19,7 +20,17 @@ from apps.roms.test_handheld import TempHandheldCase, build_muxapp
 from apps.roms.tests import make_user
 
 PREFIX = "switch/birdroms/"
-NRO = b"\x00" * 16 + b"NRO0" + b"\x00" * 108
+def minimal_nro():
+    # Bounded image layout only; this synthetic fixture is not executable code.
+    data = bytearray(256)
+    data[0x10:0x14] = b"NRO0"
+    struct.pack_into("<I", data, 0x18, len(data))
+    for position, offset, size in ((0x20, 0, 128), (0x28, 128, 64), (0x30, 192, 64)):
+        struct.pack_into("<II", data, position, offset, size)
+    return bytes(data)
+
+
+NRO = minimal_nro()
 VERSION = "2026.11.01.2"
 
 
@@ -111,6 +122,48 @@ class SwitchPublishTests(SwitchCase, SimpleTestCase):
 
 
 class SwitchNativeContractTests(SwitchCase, SimpleTestCase):
+    def test_rejects_nro_shorter_than_native_header(self):
+        source = build_switch(self.tmp / "short-nro.zip", nro=b"\0" * 16 + b"NRO0")
+        with self.assertRaises(handheld.InvalidMuxapp):
+            handheld.validate_switch_package(source)
+
+    def test_rejects_invalid_nro_image_or_segment_bounds(self):
+        cases = []
+        for image in (0, 127, len(NRO) + 1):
+            data = bytearray(NRO)
+            struct.pack_into("<I", data, 0x18, image)
+            cases.append(data)
+        for position, offset, size in ((0x20, 0, 0), (0x28, 127, 64), (0x30, 192, 65)):
+            data = bytearray(NRO)
+            struct.pack_into("<II", data, position, offset, size)
+            cases.append(data)
+        for index, data in enumerate(cases):
+            with self.subTest(case=index):
+                source = build_switch(self.tmp / f"bad-nro-bounds-{index}.zip", nro=bytes(data))
+                with self.assertRaises(handheld.InvalidMuxapp):
+                    handheld.validate_switch_package(source)
+
+    def test_rejects_invalid_nro_aset_header_or_payload_bounds(self):
+        cases = [NRO + b"ASET", NRO + b"X" * 56]
+        for offset, size in ((55, 1), (57, 1), (56, 1), (2**64 - 1, 1), (56, 2**64 - 1)):
+            aset = bytearray(56)
+            aset[:4] = b"ASET"
+            struct.pack_into("<QQ", aset, 8, offset, size)
+            cases.append(NRO + aset)
+        for index, data in enumerate(cases):
+            with self.subTest(case=index):
+                source = build_switch(self.tmp / f"bad-nro-aset-{index}.zip", nro=bytes(data))
+                with self.assertRaises(handheld.InvalidMuxapp):
+                    handheld.validate_switch_package(source)
+
+    def test_accepts_bounded_nro_assets(self):
+        aset = bytearray(56)
+        aset[:4] = b"ASET"
+        struct.pack_into("<QQ", aset, 8, 56, 4)
+        nro = NRO + aset + b"icon"
+        source = build_switch(self.tmp / "bounded-assets.zip", nro=nro)
+        self.assertEqual(handheld.validate_switch_package(source)["nro_size"], len(nro))
+
     def test_rejects_compression_methods_not_supported_by_native_minizip(self):
         for compression in (zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA):
             with self.subTest(compression=compression):

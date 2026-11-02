@@ -200,6 +200,40 @@ def _validate_public_seed(data):
         raise InvalidMuxapp("Published Switch seed must name a public server origin without credentials.") from exc
 
 
+def _validate_switch_nro_layout(archive, header, size):
+    """Mirror the native updater's bounded image/segment/optional ASET checks.
+
+    This checks file structure, not execution on physical hardware. The executable
+    is hashed separately in a streaming pass; only its small headers are buffered.
+    """
+    if size < 128 or len(header) != 128 or header[0x10:0x14] != b"NRO0":
+        raise InvalidMuxapp("Switch executable has an invalid NRO header.")
+    image = int.from_bytes(header[0x18:0x1c], "little")
+    if image < 128 or image > size:
+        raise InvalidMuxapp("Switch executable has invalid NRO image bounds.")
+    previous = 0
+    for position in (0x20, 0x28, 0x30):
+        offset = int.from_bytes(header[position:position + 4], "little")
+        length = int.from_bytes(header[position + 4:position + 8], "little")
+        if not length or offset < previous or offset + length > image:
+            raise InvalidMuxapp("Switch executable has an invalid NRO segment layout.")
+        previous = offset + length
+    if size == image:
+        return
+    if size - image < 56:
+        raise InvalidMuxapp("Switch executable has an invalid NRO asset header.")
+    with archive.open(SWITCH_NRO) as nro:
+        nro.seek(image)
+        assets = nro.read(56)
+    if len(assets) != 56 or assets[:4] != b"ASET":
+        raise InvalidMuxapp("Switch executable has an invalid NRO asset header.")
+    for position in (8, 24, 40):
+        offset = int.from_bytes(assets[position:position + 8], "little")
+        length = int.from_bytes(assets[position + 8:position + 16], "little")
+        if length and (offset < 56 or offset > size - image or length > size - image - offset):
+            raise InvalidMuxapp("Switch executable has invalid NRO asset bounds.")
+
+
 def validate_switch_package(path):
     """Validate the only permitted SD archive layout and return verified executable metadata.
 
@@ -256,8 +290,8 @@ def validate_switch_package(path):
             digest = hashlib.sha256()
             length = 0
             with archive.open(SWITCH_NRO) as nro:
-                header = nro.read(20)
-                if len(header) < 20 or header[16:20] != b"NRO0":
+                header = nro.read(128)
+                if len(header) != 128 or header[16:20] != b"NRO0":
                     raise InvalidMuxapp("Switch executable has no NRO0 magic.")
                 digest.update(header)
                 length += len(header)
@@ -266,6 +300,7 @@ def validate_switch_package(path):
                     length += len(chunk)
             if manifest["nro_size"] != length or manifest["nro_sha256"] != digest.hexdigest():
                 raise InvalidMuxapp("Switch executable hash or size does not match version.json.")
+            _validate_switch_nro_layout(archive, header, length)
             if SWITCH_PREFIX + "server.json" in names:
                 _validate_public_seed(archive.read(SWITCH_PREFIX + "server.json"))
             return manifest
