@@ -131,6 +131,8 @@ def personalized_package(server_url: str, platform="muos"):
         validate_switch_package(path)
     seed_entry = SWITCH_PREFIX + "server.json" if platform == "switch" else SEED_ENTRY
     seed = json.dumps({"server_url": server_url.rstrip("/")}) + "\n"
+    if platform == "switch" and len(seed.encode("utf-8")) > SWITCH_MAX_SEED_BYTES:
+        raise InvalidMuxapp("Switch server seed exceeds its size limit.")
     out = tempfile.SpooledTemporaryFile(max_size=16 * 1024 * 1024)
     with zipfile.ZipFile(path) as source, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
         for item in source.infolist():
@@ -141,6 +143,9 @@ def personalized_package(server_url: str, platform="muos"):
         entry.compress_type = zipfile.ZIP_DEFLATED
         entry.external_attr = 0o100644 << 16  # a regular rw-r--r-- file
         target.writestr(entry, seed)
+    if platform == "switch" and out.tell() > SWITCH_MAX_ZIP_BYTES:
+        out.close()
+        raise InvalidMuxapp("Personalized Switch ZIP exceeds the native 64 MiB limit.")
     out.seek(0)
     return out
 
@@ -148,7 +153,12 @@ def personalized_package(server_url: str, platform="muos"):
 SWITCH_PREFIX = "switch/birdroms/"
 SWITCH_NRO = SWITCH_PREFIX + "birdroms.nro"
 SWITCH_MANIFEST = SWITCH_PREFIX + "version.json"
-SWITCH_MAX_NRO_BYTES = 128 * 1024 * 1024
+# Keep these limits aligned with switch/include/update/parsing.hpp and the native
+# staging/downloader budget. Leave room for the generated server seed ZIP entry.
+SWITCH_MAX_NRO_BYTES = 64 * 1024 * 1024
+SWITCH_MAX_ZIP_BYTES = 64 * 1024 * 1024
+SWITCH_SEED_RESERVE_BYTES = 4096
+SWITCH_MAX_SEED_BYTES = 1024
 
 
 def _strict_json(data):
@@ -199,6 +209,8 @@ def validate_switch_package(path):
     allowed_files = {SWITCH_NRO, SWITCH_MANIFEST, SWITCH_PREFIX + "server.json"}
     allowed_dirs = {"switch/", SWITCH_PREFIX}
     try:
+        if Path(path).stat().st_size > SWITCH_MAX_ZIP_BYTES - SWITCH_SEED_RESERVE_BYTES:
+            raise InvalidMuxapp("Switch ZIP exceeds the native 64 MiB budget including server seed headroom.")
         with zipfile.ZipFile(path) as archive:
             names = set()
             for item in archive.infolist():
@@ -206,13 +218,15 @@ def validate_switch_package(path):
                 if name in names or item.orig_filename != name:
                     raise InvalidMuxapp("Duplicate or unsafe Switch ZIP entry.")
                 names.add(name)
+                if item.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}:
+                    raise InvalidMuxapp("Switch ZIP entries must use stored or deflated compression.")
                 kind = stat.S_IFMT(item.external_attr >> 16)
                 if item.flag_bits & 1 or kind not in {0, stat.S_IFREG, stat.S_IFDIR}:
                     raise InvalidMuxapp("Encrypted or special Switch ZIP entries are forbidden.")
                 if name not in allowed_files | allowed_dirs or "\\" in name:
                     raise InvalidMuxapp("Unexpected Switch ZIP entry; only the NRO, manifest and optional server seed are allowed.")
                 if name in allowed_dirs:
-                    if not item.is_dir() or kind == stat.S_IFREG:
+                    if not item.is_dir() or kind == stat.S_IFREG or item.file_size != 0:
                         raise InvalidMuxapp("Invalid Switch ZIP directory.")
                 elif item.is_dir() or kind == stat.S_IFDIR:
                     raise InvalidMuxapp("Invalid Switch ZIP file.")
@@ -228,6 +242,11 @@ def validate_switch_package(path):
             version = manifest["version"]
             if not isinstance(version, str) or not re.fullmatch(r"[0-9]{4}\.[0-9]{2}\.[0-9]{2}(?:\.[1-9][0-9]*)?", version):
                 raise InvalidMuxapp("Switch version must be a date version YYYY.MM.DD[.N].")
+            parts = version.split(".")
+            if int(parts[0]) < 2020:
+                raise InvalidMuxapp("Switch version year must be at least 2020.")
+            if len(parts) == 4 and (len(parts[3]) > 10 or (len(parts[3]) == 10 and parts[3] > "4294967295")):
+                raise InvalidMuxapp("Switch version revision exceeds the native unsigned 32-bit limit.")
             try:
                 datetime.strptime(version[:10], "%Y.%m.%d")
             except ValueError as exc:

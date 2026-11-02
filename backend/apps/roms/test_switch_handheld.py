@@ -6,6 +6,7 @@ import stat
 import warnings
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from django.core.management import CommandError, call_command
 from django.test import SimpleTestCase, override_settings
@@ -22,13 +23,13 @@ NRO = b"\x00" * 16 + b"NRO0" + b"\x00" * 108
 VERSION = "2026.11.01.2"
 
 
-def build_switch(path, extra=(), metadata=None, nro=NRO):
+def build_switch(path, extra=(), metadata=None, nro=NRO, compression=zipfile.ZIP_STORED):
     manifest = {"platform": "switch", "version": VERSION, "nro_sha256": hashlib.sha256(nro).hexdigest(), "nro_size": len(nro)}
     if metadata:
         manifest.update(metadata)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
-        with zipfile.ZipFile(path, "w") as archive:
+        with zipfile.ZipFile(path, "w", compression=compression) as archive:
             archive.writestr(PREFIX + "birdroms.nro", nro)
             archive.writestr(PREFIX + "version.json", json.dumps(manifest))
             for name, body in extra:
@@ -107,6 +108,97 @@ class SwitchPublishTests(SwitchCase, SimpleTestCase):
         self.assertTrue(handheld.install_bundled(source, platform="switch"))
         self.assertFalse(handheld.install_bundled(source, platform="switch"))
         call_command("install_bundled_handheld", platform="switch", stdout=io.StringIO())
+
+
+class SwitchNativeContractTests(SwitchCase, SimpleTestCase):
+    def test_rejects_compression_methods_not_supported_by_native_minizip(self):
+        for compression in (zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA):
+            with self.subTest(compression=compression):
+                source = build_switch(self.tmp / f"method-{compression}.zip", compression=compression)
+                with self.assertRaises(handheld.InvalidMuxapp):
+                    handheld.validate_switch_package(source)
+
+    def test_accepts_native_stored_and_deflated_methods(self):
+        for compression in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            with self.subTest(compression=compression):
+                source = build_switch(self.tmp / f"method-{compression}.zip", compression=compression)
+                self.assertEqual(handheld.validate_switch_package(source)["version"], VERSION)
+
+    def test_rejects_directory_records_containing_data(self):
+        source = build_switch(self.tmp / "directory-data.zip", extra=[("switch/", b"notempty")])
+        with self.assertRaises(handheld.InvalidMuxapp):
+            handheld.validate_switch_package(source)
+
+    def test_revision_must_fit_native_unsigned_32_bit_integer(self):
+        source = build_switch(self.tmp / "revision-overflow.zip", metadata={"version": "2026.11.01.4294967296"})
+        with self.assertRaises(handheld.InvalidMuxapp):
+            handheld.validate_switch_package(source)
+        valid = build_switch(self.tmp / "revision-boundary.zip", metadata={"version": "2026.11.01.4294967295"})
+        self.assertEqual(handheld.validate_switch_package(valid)["version"], "2026.11.01.4294967295")
+
+    def test_release_year_must_match_native_minimum_2020(self):
+        source = build_switch(self.tmp / "old-date.zip", metadata={"version": "2019.12.31"})
+        with self.assertRaises(handheld.InvalidMuxapp):
+            handheld.validate_switch_package(source)
+
+    def test_nro_limit_matches_native_64_mib_limit(self):
+        self.assertLessEqual(handheld.SWITCH_MAX_NRO_BYTES, 64 * 1024 * 1024)
+
+    def test_rejects_stored_archive_larger_than_native_64_mib_limit(self):
+        # A valid self-extracting ZIP prefix demonstrates that overall container size,
+        # not merely uncompressed entry size, must be checked.
+        source = self.tmp / "oversized-container.zip"
+        with source.open("wb") as target:
+            target.seek(64 * 1024 * 1024)
+            target.write(b"x")
+        with zipfile.ZipFile(source, "a") as archive:
+            with zipfile.ZipFile(build_switch(self.tmp / "inner.zip")) as inner:
+                for item in inner.infolist():
+                    archive.writestr(item, inner.read(item))
+        with self.assertRaises(handheld.InvalidMuxapp):
+            handheld.validate_switch_package(source)
+
+    def test_personalized_archive_cannot_exceed_native_zip_limit(self):
+        source = build_switch(self.tmp / "source.zip")
+        call_command("publish_handheld", str(source), platform="switch", stdout=io.StringIO())
+        with handheld.personalized_package("https://selfhost.example/", platform="switch") as package:
+            package.seek(0, 2)
+            personalized_size = package.tell()
+        self.assertGreater(personalized_size, source.stat().st_size)
+        # Lower only the ZIP budget to reproduce the boundary without a 64 MiB fixture.
+        with patch.object(handheld, "SWITCH_MAX_ZIP_BYTES", personalized_size - 1, create=True):
+            with self.assertRaises(handheld.InvalidMuxapp):
+                handheld.personalized_package("https://selfhost.example/", platform="switch")
+
+    def test_publisher_reserves_space_for_generated_server_seed(self):
+        source = build_switch(self.tmp / "seed-headroom.zip")
+        with patch.object(handheld, "SWITCH_MAX_ZIP_BYTES", source.stat().st_size + 100):
+            with self.assertRaises(CommandError):
+                call_command("publish_handheld", str(source), platform="switch", stdout=io.StringIO())
+        self.assertFalse(self.switch_target.exists())
+
+    def test_final_personalized_output_has_its_own_size_guard(self):
+        source = build_switch(self.tmp / "guard-source.zip")
+        call_command("publish_handheld", str(source), platform="switch", stdout=io.StringIO())
+        with handheld.personalized_package("https://selfhost.example/", platform="switch") as package:
+            package.seek(0, 2)
+            size = package.tell()
+        # Exercise the final output check independently of publish-time headroom.
+        with patch.object(handheld, "validate_switch_package", return_value={}), patch.object(handheld, "SWITCH_MAX_ZIP_BYTES", size - 1):
+            with self.assertRaises(handheld.InvalidMuxapp):
+                handheld.personalized_package("https://selfhost.example/", platform="switch")
+
+    def test_oversized_personalized_seed_cannot_consume_reserved_headroom(self):
+        source = build_switch(self.tmp / "seed-limit.zip")
+        call_command("publish_handheld", str(source), platform="switch", stdout=io.StringIO())
+        with self.assertRaises(handheld.InvalidMuxapp):
+            handheld.personalized_package("https://" + "x" * 4096, platform="switch")
+
+    def test_nro_entry_limit_is_enforced_before_hashing(self):
+        source = build_switch(self.tmp / "entry-over-budget.zip", nro=NRO + b"x" * 1024)
+        with patch.object(handheld, "SWITCH_MAX_NRO_BYTES", 1024):
+            with self.assertRaises(handheld.InvalidMuxapp):
+                handheld.validate_switch_package(source)
 
 
 class SwitchApiTests(SwitchCase, APITestCase):
