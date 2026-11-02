@@ -779,7 +779,7 @@ describe("approve device page", () => {
     expect(screen.queryByRole("button", { name: "Approve this device" })).not.toBeInTheDocument();
     expect(api.approveDevice).not.toHaveBeenCalled();
 
-    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "alice" } });
+    fireEvent.change(await screen.findByPlaceholderText("Username"), { target: { value: "alice" } });
     fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "pw" } });
     fireEvent.click(screen.getByRole("button", { name: "Login" }));
 

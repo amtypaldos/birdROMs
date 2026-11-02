@@ -186,7 +186,7 @@ export default function HandheldView() {
         <section className="handheld-reference" aria-labelledby="handheld-updates-title">
           <h3 id="handheld-updates-title">Updates come from your server</h3>
           {isSwitch ? <>
-            <p>The app checks your paired server in the background on launch. When a newer version is available, it downloads the update and restarts.</p>
+            <p>The app checks your paired server in the background on launch. When a newer version is available, it downloads the update and restarts when supported. Otherwise, reopen birdROMs from Homebrew Menu.</p>
             <p><kbd>B</kbd> skips an update for this launch. Press <kbd>ZL</kbd> on home to check again. Your pairing, ROM location and platform mappings stay in <code>config.json</code>.</p>
           </> : <p>The handheld updates itself from this server. When you next open birdROMs, it downloads the new version and restarts. You stay linked to your account.</p>}
           <p className="handheld-privacy-note">Already installed? Keep your configuration when copying app files. Your games stay where you put them.</p>
