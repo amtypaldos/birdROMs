@@ -321,6 +321,45 @@ describe("api client", () => {
     await expect(api.approveDevice("ABC123")).rejects.toThrow("This pairing code has expired.");
   });
 
+
+  it("preserves the default handheld endpoint and selects Switch with a public platform query", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson({ available: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    await api.handheldInfo();
+    await api.handheldInfo("switch");
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/api/handheld/", "/api/handheld/?platform=switch"]);
+    for (const [, options] of fetchMock.mock.calls) {
+      expect(options.credentials).toBe("include");
+      expect(options.headers.Authorization).toBeUndefined();
+    }
+  });
+
+  it("downloads both app packages through the session without a token in the URL", async () => {
+    const blob = new Blob(["package"]);
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, blob: () => Promise.resolve(blob), headers: new Headers() });
+    vi.stubGlobal("fetch", fetchMock);
+    URL.createObjectURL = vi.fn(() => "blob:local-package");
+    URL.revokeObjectURL = vi.fn();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await api.downloadHandheldApp();
+    await api.downloadHandheldApp("switch");
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/api/handheld/download/", "/api/handheld/download/?platform=switch"]);
+    for (const [url, options] of fetchMock.mock.calls) {
+      expect(url).not.toMatch(/token|Authorization/);
+      expect(options.credentials).toBe("include");
+      expect(options.headers.Authorization).toBeUndefined();
+    }
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2);
+    click.mockRestore();
+  });
+
+
+  it("shows the server's readable refusal when a handheld package is unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 503, text: () => Promise.resolve(JSON.stringify({ detail: "Package temporarily unavailable." })) }));
+    await expect(api.handheldInfo("switch")).rejects.toMatchObject({ status: 503, message: "Package temporarily unavailable." });
+    await expect(api.downloadHandheldApp("switch")).rejects.toMatchObject({ status: 503, message: "Package temporarily unavailable." });
+  });
+
   it("fetches library status and queues rescans", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({ running: false }) });
     vi.stubGlobal("fetch", fetchMock);
