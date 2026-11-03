@@ -271,14 +271,19 @@ export const api = {
   deletePlaylist(id) {
     return request(`/playlists/${id}/`, { method: "DELETE" });
   },
-  handheldInfo() {
-    return request("/handheld/");
+  handheldInfo(platform) {
+    return requestWithMessage(platform === "switch" ? "/handheld/?platform=switch" : "/handheld/");
   },
   // The app package is for signed-in users only: fetch with the session, then save the blob.
-  async downloadHandheldApp() {
-    const response = await rawRequest("/handheld/download/");
-    const blob = await response.blob();
-    saveBlob(blob, filenameFromDisposition(response.headers.get("Content-Disposition")) || "birdROMs.muxapp");
+  async downloadHandheldApp(platform) {
+    try {
+      const response = await rawRequest(platform === "switch" ? "/handheld/download/?platform=switch" : "/handheld/download/");
+      const blob = await response.blob();
+      saveBlob(blob, filenameFromDisposition(response.headers.get("Content-Disposition")) || (platform === "switch" ? "birdroms-switch.zip" : "birdROMs.muxapp"));
+    } catch (err) {
+      if (err.isNetworkError) throw err;
+      throw httpError(err.status, errorSentence(String(err.message || err)));
+    }
   },
   // ROMs are private: fetch through the authenticated endpoint, then save the blob locally.
   async downloadRom(rom) {

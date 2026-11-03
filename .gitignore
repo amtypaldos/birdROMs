@@ -11,6 +11,7 @@ __pycache__/
 .venv/
 # Downloaded by Docker Publish; not part of the source tree.
 backend/birdROMs.muxapp
+backend/birdROMs-switch.zip
 venv/
 .pytest_cache/
 .mypy_cache/

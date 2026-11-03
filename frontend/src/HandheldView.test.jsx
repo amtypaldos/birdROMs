@@ -34,7 +34,7 @@ describe("HandheldView", () => {
     await renderView();
 
     expect(screen.getByRole("heading", { name: "Get birdROMs on your handheld" })).toBeInTheDocument();
-    expect(screen.getAllByRole("listitem").length).toBeGreaterThanOrEqual(5);
+    expect(screen.getByRole("list", { name: "Installation steps" }).children).toHaveLength(3);
     expect(screen.getAllByText(/ARCHIVE/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Archive Manager/).length).toBeGreaterThan(0);
     expect(screen.getByText(/2\.8 MB/)).toBeInTheDocument();
@@ -70,14 +70,95 @@ describe("HandheldView", () => {
   it("mentions typing the code on this page in the link step", async () => {
     await renderView();
 
-    expect(screen.getByText(/type the code shown on the handheld/i)).toBeInTheDocument();
+    expect(screen.getByText(/type the code shown on your device/i)).toBeInTheDocument();
   });
 
   it("says the handheld updates itself instead of asking for a re-copy", async () => {
     await renderView();
 
-    expect(screen.getByText(/handheld updates itself from this site/i)).toBeInTheDocument();
+    expect(screen.getByText(/handheld updates itself from this server/i)).toBeInTheDocument();
     expect(screen.queryByText(/copy it into/i)).not.toBeInTheDocument();
+  });
+
+
+  it("switches to the Switch package and its distinct installation instructions", async () => {
+    api.handheldInfo.mockImplementation((platform) => Promise.resolve(platform === "switch"
+      ? { ...INFO, filename: "birdroms-switch.zip", version: "2026.11.01" } : INFO));
+    await renderView();
+    fireEvent.click(screen.getByRole("button", { name: /Nintendo Switch/ }));
+    await act(async () => {});
+    expect(api.handheldInfo).toHaveBeenLastCalledWith("switch");
+    expect(screen.getByText("2026.11.01")).toBeInTheDocument();
+    expect(screen.getByText("/switch/birdroms/birdroms.nro")).toBeInTheDocument();
+    expect(screen.getAllByText(/server.json/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("list", { name: "Installation steps" }).children).toHaveLength(3);
+    expect(screen.queryByText(/Archive Manager/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Download birdroms-switch.zip" }));
+    await act(async () => {});
+    expect(api.downloadHandheldApp).toHaveBeenCalledWith("switch");
+    expect(screen.getAllByRole("form", { name: "Approve a device by code" })).toHaveLength(1);
+  });
+
+  it("keeps release loading, unavailability and errors specific to the chosen platform", async () => {
+    api.handheldInfo.mockImplementation((platform) => platform === "switch"
+      ? Promise.reject(new Error("Switch package check failed")) : Promise.resolve(INFO));
+    await renderView();
+    fireEvent.click(screen.getByRole("button", { name: /Nintendo Switch/ }));
+    await act(async () => {});
+    expect(screen.getByRole("alert")).toHaveTextContent("Switch package check failed");
+    expect(screen.queryByRole("button", { name: "Download birdROMs.muxapp" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /muOS/ }));
+    await act(async () => {});
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download birdROMs.muxapp" })).toBeInTheDocument();
+  });
+
+  it("does not let an old platform response replace the current release", async () => {
+    let resolveMuos;
+    api.handheldInfo.mockImplementation((platform) => platform === "switch"
+      ? Promise.resolve({ available: false }) : new Promise((resolve) => { resolveMuos = resolve; }));
+    await renderView();
+    expect(screen.getByText(/Checking this server/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Nintendo Switch/ }));
+    await act(async () => {});
+    await act(async () => { resolveMuos(INFO); });
+    expect(screen.getByText(/Switch app has not been published yet/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Download birdROMs/ })).not.toBeInTheDocument();
+  });
+
+  it("explains server personalization without putting a device token in a link", async () => {
+    await renderView();
+    fireEvent.click(screen.getByRole("button", { name: /Nintendo Switch/ }));
+    await act(async () => {});
+    expect(screen.getByText(/contains this server.*address, not a device token/)).toBeInTheDocument();
+    expect(screen.getByText(/created after you approve pairing/)).toBeInTheDocument();
+    for (const link of screen.queryAllByRole("link")) expect(link.href).not.toMatch(/device_token|Authorization/);
+  });
+
+
+  it("retries a failed package check without leaving the selected platform", async () => {
+    api.handheldInfo.mockResolvedValueOnce(INFO).mockRejectedValueOnce(new Error("Server unavailable"))
+      .mockResolvedValueOnce({ ...INFO, filename: "birdroms-switch.zip" });
+    await renderView();
+    fireEvent.click(screen.getByRole("button", { name: /Nintendo Switch/ }));
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await act(async () => {});
+    expect(api.handheldInfo).toHaveBeenLastCalledWith("switch");
+    expect(screen.getByRole("button", { name: "Download birdroms-switch.zip" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("locks platform selection until the current package download finishes", async () => {
+    let resolveDownload;
+    api.downloadHandheldApp.mockReturnValue(new Promise((resolve) => { resolveDownload = resolve; }));
+    await renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Download birdROMs.muxapp" }));
+    expect(screen.getByRole("button", { name: /Nintendo Switch/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /muOS/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Downloading…" })).toBeDisabled();
+    await act(async () => { resolveDownload(); });
+    expect(screen.getByRole("button", { name: /Nintendo Switch/ })).toBeEnabled();
   });
 
   it("approves a typed code, trimmed, and shows success", async () => {
